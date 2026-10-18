@@ -1852,6 +1852,7 @@ impl Minimon {
                     .spacing(cosmic::theme::spacing().space_xxs),
             )
             .push(self.systemload.settings_ui())
+            .push(widget::text::caption(fl!("system-load-chart-description")))
     }
 
     fn memory_settings_page(&self) -> SettingsColumn<'_> {

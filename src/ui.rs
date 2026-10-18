@@ -108,7 +108,6 @@ pub fn value_colors_row<'a>(
     id: Option<String>,
 ) -> list::ListButton<'a, Message> {
     settings::item::builder(fl!("use-graph-colors"))
-        .description(fl!("use-graph-colors-description"))
         .toggler(enabled, move |value| {
             Message::ToggleValueColors(device, id.clone(), value)
         })
