@@ -431,12 +431,39 @@ pub enum NetworkVariant {
     Combined,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum NetworkTotalPeriod {
+    #[default]
+    Session,
+    Today,
+}
+
+impl From<usize> for NetworkTotalPeriod {
+    fn from(index: usize) -> Self {
+        match index {
+            1 => NetworkTotalPeriod::Today,
+            _ => NetworkTotalPeriod::Session,
+        }
+    }
+}
+
+impl From<NetworkTotalPeriod> for usize {
+    fn from(period: NetworkTotalPeriod) -> Self {
+        match period {
+            NetworkTotalPeriod::Session => 0,
+            NetworkTotalPeriod::Today => 1,
+        }
+    }
+}
+
 make_config!(NetworkConfig {
     pub adaptive: bool,
     pub bandwidth: u64,
     pub unit: Option<usize>,
     pub variant: NetworkVariant,
     pub show_bytes: bool,
+    pub show_totals: bool,
+    pub total_period: NetworkTotalPeriod,
     /// None monitors all interfaces; an empty selection monitors none.
     pub interfaces: Option<Vec<String>>,
 });
@@ -456,6 +483,8 @@ impl Default for NetworkConfig {
             unit: Some(0),
             variant: NetworkVariant::Combined,
             show_bytes: false,
+            show_totals: false,
+            total_period: NetworkTotalPeriod::Session,
             interfaces: None,
         }
     }

@@ -36,7 +36,7 @@ use crate::barchart::StackedBarSvg;
 use crate::colorpicker::ColorPicker;
 use crate::config::{
     ChartColors, ChartKind, ColorVariant, ContentType, DeviceKind, DisksVariant, GpuConfig,
-    NetworkVariant,
+    NetworkTotalPeriod, NetworkVariant,
 };
 use crate::sensors::cpu::Cpu;
 use crate::sensors::cputemp::CpuTemp;
@@ -247,6 +247,8 @@ pub enum Message {
     ColorTextInputAlphaChanged(String),
 
     ToggleNetBytes(bool),
+    ToggleNetTotals(bool),
+    NetworkSelectTotalPeriod(usize),
     ToggleAllNetworkInterfaces(bool),
     ToggleNetworkInterface(String, bool),
     ToggleNetCombined(bool),
@@ -799,6 +801,20 @@ impl cosmic::Application for Minimon {
                 info!("Message::ToggleNetBytes({toggle})");
                 self.config.network1.show_bytes = toggle;
                 self.config.network2.show_bytes = toggle;
+                self.save_config();
+            }
+
+            Message::ToggleNetTotals(toggle) => {
+                info!("Message::ToggleNetTotals({toggle})");
+                self.config.network1.show_totals = toggle;
+                self.config.network2.show_totals = toggle;
+                self.save_config();
+            }
+
+            Message::NetworkSelectTotalPeriod(period) => {
+                let period = NetworkTotalPeriod::from(period);
+                self.config.network1.total_period = period;
+                self.config.network2.total_period = period;
                 self.save_config();
             }
 
@@ -1387,8 +1403,9 @@ impl Minimon {
                 || self.config.systemload.visible()
                 || self.config.memory.visible()
                 || self.config.network1.visible()
+                || self.config.network1.show_totals
                 || (self.config.network1.variant != NetworkVariant::Combined
-                    && self.config.network2.visible())
+                    && (self.config.network2.visible() || self.config.network2.show_totals))
                 || self.config.disks1.visible()
                 || (self.config.disks1.variant != DisksVariant::Combined
                     && self.config.disks2.visible())
@@ -2324,53 +2341,91 @@ impl Minimon {
             network::UnitVariant::Short
         };
 
-        let network_has_content = self.config.network1.value_visible()
+        let network1_values = self.config.network1.value_visible();
+        let network2_values = self.config.network2.value_visible();
+        let network1_totals = self.config.network1.show_totals;
+        let network2_totals = self.config.network2.show_totals;
+        let network_has_content = network1_values
             || self.config.network1.chart_visible()
+            || network1_totals
             || (!nw_combined
-                && (self.config.network2.value_visible() || self.config.network2.chart_visible()));
+                && (network2_values || self.config.network2.chart_visible() || network2_totals));
 
         if self.config.network1.label_visible() && network_has_content {
             self.push_text_label(&mut elements, &fl!("label-network"));
         }
 
-        if self.config.network1.value_visible() {
+        if network1_values || network1_totals {
             let mut network_values = Vec::new();
-            let mut dl_row = Vec::new();
-
-            if horizontal {
-                dl_row.push(self.figure_value("↓".to_owned(), None).into());
-            }
-            dl_row.push(
-                format_value(
-                    self.network1
-                        .download_label(sample_rate_ms, unit_len)
-                        .clone(),
-                    self.network1.download_value_style(),
-                )
-                .into(),
-            );
 
             if nw_combined {
                 network_values.push(widget::space::vertical().into());
             }
 
-            network_values.push(Row::from_vec(dl_row).into());
-
-            if nw_combined {
-                let mut ul_row = Vec::new();
+            if network1_values {
+                let mut dl_row = Vec::new();
 
                 if horizontal {
-                    ul_row.push(self.figure_value("↑".to_owned(), None).into());
+                    dl_row.push(self.figure_value("↓".to_owned(), None).into());
                 }
-                ul_row.push(
+                dl_row.push(
                     format_value(
-                        self.network1.upload_label(sample_rate_ms, unit_len),
-                        self.network1.upload_value_style(),
+                        self.network1
+                            .download_label(sample_rate_ms, unit_len)
+                            .clone(),
+                        self.network1.download_value_style(),
                     )
                     .into(),
                 );
 
-                network_values.push(Row::from_vec(ul_row).into());
+                network_values.push(Row::from_vec(dl_row).into());
+            }
+
+            if network1_totals {
+                network_values.push(
+                    format_value(
+                        self.network1.total_download_label(unit_len),
+                        self.network1.download_value_style(),
+                    )
+                    .into(),
+                );
+            }
+
+            if nw_combined {
+                if network1_values {
+                    let mut ul_row = Vec::new();
+
+                    if horizontal {
+                        ul_row.push(self.figure_value("↑".to_owned(), None).into());
+                    }
+                    ul_row.push(
+                        format_value(
+                            self.network1.upload_label(sample_rate_ms, unit_len),
+                            self.network1.upload_value_style(),
+                        )
+                        .into(),
+                    );
+
+                    network_values.push(Row::from_vec(ul_row).into());
+                }
+
+                if network1_totals {
+                    network_values.push(
+                        format_value(
+                            self.network1.total_upload_label(unit_len),
+                            self.network1.upload_value_style(),
+                        )
+                        .into(),
+                    );
+                    network_values.push(
+                        format_value(
+                            self.network1.total_combined_label(unit_len),
+                            self.network1.download_value_style(),
+                        )
+                        .into(),
+                    );
+                }
+
                 network_values.push(widget::space::vertical().into());
             }
 
@@ -2387,23 +2442,35 @@ impl Minimon {
             );
         }
 
-        if self.config.network2.value_visible() && !nw_combined {
+        if !nw_combined && (network2_values || network2_totals) {
             let mut network_values = Vec::new();
 
-            let mut ul_row = Vec::new();
+            if network2_values {
+                let mut ul_row = Vec::new();
 
-            if horizontal {
-                ul_row.push(self.figure_value("↑".to_owned(), None).into());
+                if horizontal {
+                    ul_row.push(self.figure_value("↑".to_owned(), None).into());
+                }
+                ul_row.push(
+                    format_value(
+                        self.network2.upload_label(sample_rate_ms, unit_len),
+                        self.network2.upload_value_style(),
+                    )
+                    .into(),
+                );
+
+                network_values.push(Row::from_vec(ul_row).into());
             }
-            ul_row.push(
-                format_value(
-                    self.network2.upload_label(sample_rate_ms, unit_len),
-                    self.network2.upload_value_style(),
-                )
-                .into(),
-            );
 
-            network_values.push(Row::from_vec(ul_row).into());
+            if network2_totals {
+                network_values.push(
+                    format_value(
+                        self.network2.total_upload_label(unit_len),
+                        self.network2.upload_value_style(),
+                    )
+                    .into(),
+                );
+            }
 
             elements.push_back(Column::from_vec(network_values).into());
         }
@@ -2743,10 +2810,11 @@ impl Minimon {
         }
 
         let combined_network = self.config.network1.variant == NetworkVariant::Combined;
+        let network1_visible = self.config.network1.visible() || self.config.network1.show_totals;
+        let network2_visible = self.config.network2.visible() || self.config.network2.show_totals;
         if all
-            || (combined_network && self.config.network1.visible())
-            || (!combined_network
-                && (self.config.network1.visible() || self.config.network1.visible()))
+            || (combined_network && network1_visible)
+            || (!combined_network && (network1_visible || network2_visible))
         {
             self.network1.update();
             self.network2.update();
@@ -2971,12 +3039,33 @@ impl Minimon {
                 self.measure_text_width("188°C", &attrs)
             };
 
-            self.value_network_width = match (self.config.network1.show_bytes, is_horizontal) {
+            let mut network_width = match (self.config.network1.show_bytes, is_horizontal) {
                 (false, false) => self.measure_text_width("8.88M", &attrs),
                 (false, true) => self.measure_text_width("8.88 Mbps", &attrs),
                 (true, false) => self.measure_text_width("8.88M", &attrs),
                 (true, true) => self.measure_text_width("8.88 MB/s", &attrs),
             };
+            if self.config.network1.show_totals {
+                let totals_width = if is_horizontal {
+                    self.measure_text_width("Σ   8.88 GB", &attrs)
+                } else {
+                    self.measure_text_width("Σ8.88G", &attrs)
+                };
+                let combined_width = if self.config.network1.variant == NetworkVariant::Combined {
+                    if is_horizontal {
+                        self.measure_text_width("⇅Σ   8.88 GB", &attrs)
+                    } else {
+                        self.measure_text_width("⇅Σ8.88G", &attrs)
+                    }
+                } else {
+                    None
+                };
+                network_width = [network_width, totals_width, combined_width]
+                    .into_iter()
+                    .flatten()
+                    .reduce(f32::max);
+            }
+            self.value_network_width = network_width;
 
             self.value_disks_width = if is_horizontal {
                 self.measure_text_width("8.88 MB/s", &attrs)

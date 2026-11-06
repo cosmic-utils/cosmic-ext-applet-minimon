@@ -1,4 +1,5 @@
 use bounded_vec_deque::BoundedVecDeque;
+use chrono::NaiveDate;
 
 use cosmic::Element;
 use log::info;
@@ -6,7 +7,10 @@ use sysinfo::Networks;
 
 use crate::{
     colorpicker::DemoGraph,
-    config::{ChartColors, ChartKind, ColorVariant, DeviceKind, NetworkConfig, NetworkVariant},
+    config::{
+        ChartColors, ChartKind, ColorVariant, DeviceKind, NetworkConfig, NetworkTotalPeriod,
+        NetworkVariant,
+    },
     fl,
     svg_graph::SvgColors,
 };
@@ -55,6 +59,13 @@ pub static COLOR_CHOICES_UL: LazyLock<[(&'static str, ColorVariant); 3]> = LazyL
     ]
 });
 
+pub static TOTAL_PERIOD_OPTIONS: LazyLock<[&'static str; 2]> = LazyLock::new(|| {
+    [
+        fl!("net-total-session").leak(),
+        fl!("net-total-today").leak(),
+    ]
+});
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum UnitVariant {
     Short,
@@ -66,6 +77,12 @@ pub struct Network {
     networks: Networks,
     download: BoundedVecDeque<u64>,
     upload: BoundedVecDeque<u64>,
+    session_download: u64,
+    session_upload: u64,
+    today_download: u64,
+    today_upload: u64,
+    last_totals: Option<(u64, u64)>,
+    last_day: Option<NaiveDate>,
     max_y: Option<u64>,
     svg_colors: SvgColors,
     dropdown_options: Vec<&'static str>,
@@ -132,6 +149,12 @@ impl Sensor for Network {
                     BoundedVecDeque::from_iter(std::iter::repeat_n(0, MAX_SAMPLES), MAX_SAMPLES);
                 self.upload =
                     BoundedVecDeque::from_iter(std::iter::repeat_n(0, MAX_SAMPLES), MAX_SAMPLES);
+                self.session_download = 0;
+                self.session_upload = 0;
+                self.today_download = 0;
+                self.today_upload = 0;
+                self.last_totals = None;
+                self.last_day = None;
                 self.networks.refresh(true);
             }
             self.config = cfg.clone();
@@ -167,14 +190,28 @@ impl Sensor for Network {
     /// Retrieve the amount of data transmitted since last update.
     fn update(&mut self) {
         self.networks.refresh(true);
+        let selected = self.config.interfaces.as_deref();
         let (dl, ul) = sum_traffic(
             self.networks
                 .iter()
                 .map(|(name, data)| (name.as_str(), data.received(), data.transmitted())),
-            self.config.interfaces.as_deref(),
+            selected,
+        );
+        let (total_dl, total_ul) = sum_total_traffic(
+            self.networks.iter().map(|(name, data)| {
+                (
+                    name.as_str(),
+                    data.total_received(),
+                    data.total_transmitted(),
+                )
+            }),
+            selected,
         );
         self.download.push_back(dl);
         self.upload.push_back(ul);
+        self.session_download = total_dl;
+        self.session_upload = total_ul;
+        self.add_daily_traffic(total_dl, total_ul);
     }
 
     fn demo_graph(&self) -> Box<dyn DemoGraph> {
@@ -274,6 +311,11 @@ impl Sensor for Network {
                         Message::ToggleNetValue(variant, t)
                     }),
             )
+            .add(
+                settings::item::builder(fl!("net-show-totals"))
+                    .description(fl!("net-show-totals-description"))
+                    .toggler(config.show_totals, Message::ToggleNetTotals),
+            )
             .add(crate::ui::value_colors_row(
                 config.use_graph_colors,
                 DeviceKind::Network(variant),
@@ -284,6 +326,18 @@ impl Sensor for Network {
                     Message::ToggleAdaptiveNet(variant, t)
                 }),
             );
+
+        if config.show_totals {
+            section = section.add(crate::ui::control_row(
+                fl!("net-total-period"),
+                widget::dropdown(
+                    &TOTAL_PERIOD_OPTIONS[..],
+                    Some(usize::from(config.total_period)),
+                    Message::NetworkSelectTotalPeriod,
+                )
+                .width(140),
+            ));
+        }
 
         if !config.adaptive {
             section = section.add(crate::ui::control_row(
@@ -327,6 +381,12 @@ impl Default for Network {
             networks,
             download: BoundedVecDeque::from_iter(std::iter::repeat_n(0, MAX_SAMPLES), MAX_SAMPLES),
             upload: BoundedVecDeque::from_iter(std::iter::repeat_n(0, MAX_SAMPLES), MAX_SAMPLES),
+            session_download: 0,
+            session_upload: 0,
+            today_download: 0,
+            today_upload: 0,
+            last_totals: None,
+            last_day: None,
             max_y: None,
             dropdown_options: ["b", "Kb", "Mb", "Gb", "Tb"].into(),
             svg_colors: SvgColors::new(&ChartColors::default()),
@@ -389,13 +449,31 @@ impl Network {
             value /= 8.0;
         }
 
+        let (units_short, units_long) = if show_bytes {
+            (UNITS_SHORT_BYTES, UNITS_LONG_BYTES)
+        } else {
+            (UNITS_SHORT, UNITS_LONG)
+        };
+
+        Self::format_scaled(value, format, units_short, units_long)
+    }
+
+    /// Format a number of bytes, rather than a bandwidth in bits per second.
+    fn makebytes(val: u64, format: UnitVariant) -> String {
+        Self::format_scaled(val as f64, format, UNITS_SHORT_BYTES, UNITS_LONG_BYTES)
+    }
+
+    fn format_scaled(
+        mut value: f64,
+        format: UnitVariant,
+        units_short: [&str; 5],
+        units_long: [&str; 5],
+    ) -> String {
         let mut unit_index = 0;
 
-        let units = match (show_bytes, format) {
-            (false, UnitVariant::Short) => UNITS_SHORT,
-            (false, UnitVariant::Long) => UNITS_LONG,
-            (true, UnitVariant::Short) => UNITS_SHORT_BYTES,
-            (true, UnitVariant::Long) => UNITS_LONG_BYTES,
+        let units = match format {
+            UnitVariant::Short => units_short,
+            UnitVariant::Long => units_long,
         };
 
         // Scale the value to the appropriate unit
@@ -437,6 +515,59 @@ impl Network {
         }
 
         result
+    }
+
+    fn add_daily_traffic(&mut self, total_download: u64, total_upload: u64) {
+        let today = chrono::Local::now().date_naive();
+        if self.last_day == Some(today) {
+            if let Some((last_download, last_upload)) = self.last_totals {
+                self.today_download = self
+                    .today_download
+                    .saturating_add(total_download.saturating_sub(last_download));
+                self.today_upload = self
+                    .today_upload
+                    .saturating_add(total_upload.saturating_sub(last_upload));
+            }
+        } else {
+            self.today_download = 0;
+            self.today_upload = 0;
+        }
+        self.last_day = Some(today);
+        self.last_totals = Some((total_download, total_upload));
+    }
+
+    fn total_label(value: u64, format: UnitVariant) -> String {
+        let amount = Self::makebytes(value, format);
+        match format {
+            UnitVariant::Short => format!("Σ{amount}"),
+            UnitVariant::Long => format!("Σ {amount}"),
+        }
+    }
+
+    pub fn total_download_label(&self, format: UnitVariant) -> String {
+        let value = match self.config.total_period {
+            NetworkTotalPeriod::Session => self.session_download,
+            NetworkTotalPeriod::Today => self.today_download,
+        };
+        Self::total_label(value, format)
+    }
+
+    pub fn total_upload_label(&self, format: UnitVariant) -> String {
+        let value = match self.config.total_period {
+            NetworkTotalPeriod::Session => self.session_upload,
+            NetworkTotalPeriod::Today => self.today_upload,
+        };
+        Self::total_label(value, format)
+    }
+
+    pub fn total_combined_label(&self, format: UnitVariant) -> String {
+        let value = match self.config.total_period {
+            NetworkTotalPeriod::Session => {
+                self.session_download.saturating_add(self.session_upload)
+            }
+            NetworkTotalPeriod::Today => self.today_download.saturating_add(self.today_upload),
+        };
+        format!("⇅{}", Self::total_label(value, format))
     }
 
     // If the sample rate doesn't match exactly one second (more or less),
@@ -489,6 +620,21 @@ fn sum_traffic<'a>(
         })
 }
 
+/// Sum the interface lifetime counters, in bytes.
+fn sum_total_traffic<'a>(
+    interfaces: impl IntoIterator<Item = (&'a str, u64, u64)>,
+    selected: Option<&[String]>,
+) -> (u64, u64) {
+    interfaces
+        .into_iter()
+        .filter(|(name, _, _)| {
+            selected.is_none_or(|selected| selected.iter().any(|interface| interface == name))
+        })
+        .fold((0, 0), |(rx, tx), (_, received, transmitted)| {
+            (rx + received, tx + transmitted)
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,6 +680,43 @@ mod tests {
         ];
         let selected = vec!["eno1".to_owned()];
         assert_eq!(sum_traffic(counters, Some(&selected)), (9600, 2400));
+    }
+
+    #[test]
+    fn lifetime_counters_are_summed_as_bytes() {
+        let counters = [("lo", 1000, 1000), ("eno1", 120, 30), ("wlan0", 80, 20)];
+        assert_eq!(sum_total_traffic(counters, None), (1200, 1050));
+        let selected = vec!["eno1".into(), "wlan0".into(), "absent0".into()];
+        assert_eq!(sum_total_traffic(counters, Some(&selected)), (200, 50));
+        assert_eq!(sum_total_traffic(counters, Some(&[])), (0, 0));
+    }
+
+    #[test]
+    fn daily_totals_add_counter_deltas_and_ignore_counter_resets() {
+        let mut network = Network::default();
+        network.last_day = Some(chrono::Local::now().date_naive());
+        network.last_totals = Some((1000, 500));
+        network.add_daily_traffic(1500, 700);
+        assert_eq!((network.today_download, network.today_upload), (500, 200));
+        network.add_daily_traffic(1600, 750);
+        assert_eq!((network.today_download, network.today_upload), (600, 250));
+        network.add_daily_traffic(100, 50);
+        assert_eq!((network.today_download, network.today_upload), (600, 250));
+    }
+
+    #[test]
+    fn combined_totals_sum_download_and_upload_for_each_period() {
+        let mut network = Network::default();
+        network.session_download = 1500;
+        network.session_upload = 500;
+        network.today_download = 300;
+        network.today_upload = 200;
+
+        network.config.total_period = NetworkTotalPeriod::Session;
+        assert_eq!(network.total_combined_label(UnitVariant::Short), "⇅Σ2.00K");
+
+        network.config.total_period = NetworkTotalPeriod::Today;
+        assert_eq!(network.total_combined_label(UnitVariant::Short), "⇅Σ500B");
     }
 }
 
