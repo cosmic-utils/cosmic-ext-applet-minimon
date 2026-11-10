@@ -45,11 +45,22 @@ pub static COLOR_CHOICES_LINE: LazyLock<[(&'static str, ColorVariant); 3]> = Laz
     ]
 });
 
-static GRAPH_OPTIONS_RING_LINE_BARS: LazyLock<[&'static str; 3]> = LazyLock::new(|| {
+static GRAPH_OPTIONS_RING_LINE_BARS: LazyLock<Vec<super::GraphOption>> = LazyLock::new(|| {
+    super::graph_options(&[
+        ChartKind::Ring,
+        ChartKind::Line,
+        ChartKind::StackedBars,
+        ChartKind::VerticalBar,
+    ])
+});
+
+/// Fill, track, background and frame of the vertical bar chart.
+pub static COLOR_CHOICES_LEVEL: LazyLock<[(&'static str, ColorVariant); 4]> = LazyLock::new(|| {
     [
-        fl!("graph-type-ring").leak(),
-        fl!("graph-type-line").leak(),
-        fl!("graph-type-bars").leak(),
+        (fl!("graph-cpu-load").leak(), ColorVariant::Graph1),
+        (fl!("graph-cpu-idle").leak(), ColorVariant::Graph2),
+        (fl!("graph-line-back").leak(), ColorVariant::Background),
+        (fl!("graph-line-frame").leak(), ColorVariant::Frame),
     ]
 });
 
@@ -94,7 +105,7 @@ pub struct Cpu {
     samples_sum: BoundedVecDeque<f64>,
     // CPU load for the last MAX_SAMPLES updates, split into user and system
     samples_split: BoundedVecDeque<CpuLoad>,
-    graph_options: Vec<&'static str>,
+    graph_options: Vec<super::GraphOption>,
     /// colors cached so we don't need to convert to string every time
     svg_colors: SvgColors,
     config: CpuConfig,
@@ -151,6 +162,13 @@ impl DemoGraph for Cpu {
                 );
                 StackedBarSvg::default().svg(&map, &self.svg_colors)
             }
+            // show a bar of 40% of max
+            ChartKind::VerticalBar => crate::svg_graph::level_bars(
+                &[40.0],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                &self.svg_colors,
+            ),
         }
     }
 
@@ -168,6 +186,7 @@ impl DemoGraph for Cpu {
             ChartKind::Line => (*COLOR_CHOICES_LINE).into(),
             ChartKind::Ring => (*COLOR_CHOICES_RING).into(),
             ChartKind::StackedBars => (*COLOR_CHOICES_BARS).into(),
+            ChartKind::VerticalBar => (*COLOR_CHOICES_LEVEL).into(),
             _ => panic!(
                 "CPU color_choices {:?} wrong chart type!",
                 self.config.chart
@@ -198,7 +217,10 @@ impl Sensor for Cpu {
 
     fn set_graph_kind(&mut self, kind: ChartKind) {
         assert!(
-            kind == ChartKind::Line || kind == ChartKind::Ring || kind == ChartKind::StackedBars
+            kind == ChartKind::Line
+                || kind == ChartKind::Ring
+                || kind == ChartKind::StackedBars
+                || kind == ChartKind::VerticalBar
         );
         self.config.chart = kind;
     }
@@ -281,6 +303,12 @@ impl Sensor for Cpu {
                 log::error!("Heat not supported!");
                 INVALID_IMG.to_string()
             }
+            ChartKind::VerticalBar => crate::svg_graph::level_bars(
+                &[self.latest_sample().clamp(0.0, 100.0)],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                &self.svg_colors,
+            ),
         };
         super::svg_icon_container::<Message>(svg)
     }
@@ -288,14 +316,6 @@ impl Sensor for Cpu {
     fn settings_ui(&'_ self) -> Element<'_, crate::app::Message> {
         let config = &self.config;
         let kind = self.graph_kind();
-
-        // The Heat kind is not supported here, so Bars takes its place in the
-        // dropdown numbering.
-        let selected: Option<usize> = if kind == ChartKind::StackedBars {
-            Some(2)
-        } else {
-            Some(kind.into())
-        };
 
         let mut section = settings::section().add(
             settings::item::builder(fl!("enable-chart"))
@@ -350,14 +370,8 @@ impl Sensor for Cpu {
         section
             .add(ui::chart_type_row(
                 &self.graph_options,
-                selected,
-                move |index| {
-                    let mut choice: ChartKind = index.into();
-                    if choice != ChartKind::Ring && choice != ChartKind::Line {
-                        choice = ChartKind::StackedBars;
-                    }
-                    Message::SelectGraphType(DeviceKind::Cpu, choice)
-                },
+                kind,
+                move |choice| Message::SelectGraphType(DeviceKind::Cpu, choice),
             ))
             .add(ui::chart_color_row(
                 config.colors().graph1,
@@ -380,10 +394,10 @@ impl Cpu {
         let mut value = String::with_capacity(6);
         value.push('0');
 
-        let graph_opts: Vec<&'static str> = if is_horizontal {
-            (*GRAPH_OPTIONS_RING_LINE_BARS).into()
+        let graph_opts: Vec<super::GraphOption> = if is_horizontal {
+            (*GRAPH_OPTIONS_RING_LINE_BARS).clone()
         } else {
-            (*super::GRAPH_OPTIONS_RING_LINE).into()
+            (*super::GRAPH_OPTIONS_RING_LINE).clone()
         };
 
         // Initialize CPU/Core structures
@@ -431,7 +445,7 @@ impl Cpu {
                 ),
                 MAX_SAMPLES,
             ),
-            graph_options: graph_opts.to_vec(),
+            graph_options: graph_opts,
             svg_colors: SvgColors::new(&ChartColors::default()),
             config: CpuConfig::default(),
             name,

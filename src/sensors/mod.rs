@@ -44,6 +44,16 @@ pub static COLOR_CHOICES_LINE: LazyLock<[(&'static str, ColorVariant); 3]> = Laz
     ]
 });
 
+/// Fill, track, background and frame of a vertical bar chart.
+pub static COLOR_CHOICES_LEVEL: LazyLock<[(&'static str, ColorVariant); 4]> = LazyLock::new(|| {
+    [
+        (fl!("graph-level-value").leak(), ColorVariant::Graph1),
+        (fl!("graph-level-track").leak(), ColorVariant::Graph2),
+        (fl!("graph-line-back").leak(), ColorVariant::Background),
+        (fl!("graph-line-frame").leak(), ColorVariant::Frame),
+    ]
+});
+
 pub static COLOR_CHOICES_HEAT: LazyLock<[(&'static str, ColorVariant); 2]> = LazyLock::new(|| {
     [
         (fl!("graph-line-back").leak(), ColorVariant::Background),
@@ -60,16 +70,53 @@ pub static UNIT_OPTIONS: LazyLock<[&'static str; 4]> = LazyLock::new(|| {
     ]
 });
 
-static GRAPH_OPTIONS_RING_LINE: LazyLock<[&'static str; 2]> =
-    LazyLock::new(|| [fl!("graph-type-ring").leak(), fl!("graph-type-line").leak()]);
+/// One entry of a sensor's `Chart type` dropdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GraphOption {
+    pub kind: ChartKind,
+    pub label: &'static str,
+}
 
-static GRAPH_OPTIONS_RING_LINE_HEAT: LazyLock<[&'static str; 3]> = LazyLock::new(|| {
-    [
-        fl!("graph-type-ring").leak(),
-        fl!("graph-type-line").leak(),
-        fl!("graph-type-heat").leak(),
-    ]
+/// The label a chart kind is offered under in a `Chart type` dropdown.
+pub fn graph_option_label(kind: ChartKind) -> &'static str {
+    match kind {
+        ChartKind::Ring => fl!("graph-type-ring").leak(),
+        ChartKind::Line => fl!("graph-type-line").leak(),
+        ChartKind::Heat => fl!("graph-type-heat").leak(),
+        ChartKind::StackedBars => fl!("graph-type-bars").leak(),
+        ChartKind::VerticalBar => fl!("graph-type-vertical").leak(),
+    }
+}
+
+/// A `Chart type` dropdown listing `kinds` in the given order.
+pub fn graph_options(kinds: &[ChartKind]) -> Vec<GraphOption> {
+    kinds
+        .iter()
+        .map(|kind| GraphOption {
+            kind: *kind,
+            label: graph_option_label(*kind),
+        })
+        .collect()
+}
+
+/// Ring, line and the vertical bar chart, the choices of the percentage sensors.
+static GRAPH_OPTIONS_RING_LINE: LazyLock<Vec<GraphOption>> =
+    LazyLock::new(|| graph_options(&[ChartKind::Ring, ChartKind::Line, ChartKind::VerticalBar]));
+
+/// The same, plus the heat chart the temperature sensors can draw.
+static GRAPH_OPTIONS_RING_LINE_HEAT: LazyLock<Vec<GraphOption>> = LazyLock::new(|| {
+    graph_options(&[
+        ChartKind::Ring,
+        ChartKind::Line,
+        ChartKind::Heat,
+        ChartKind::VerticalBar,
+    ])
 });
+
+/// Throughput sensors only ever drew a line, so their dropdown offers the bar
+/// chart as the alternative to it.
+static GRAPH_OPTIONS_LINE_BARS: LazyLock<Vec<GraphOption>> =
+    LazyLock::new(|| graph_options(&[ChartKind::Line, ChartKind::VerticalBar]));
 
 use crate::{colorpicker::DemoGraph, config::ChartKind};
 
@@ -110,6 +157,16 @@ pub mod gpus;
 pub mod memory;
 pub mod network;
 pub mod systemload;
+
+/// How full a temperature bar is: `min_temp` sits at the bottom of the scale,
+/// the critical temperature at the top, mirroring the ring chart.
+pub fn temperature_level(value: f64, maximum: f64, min_temp: f64) -> f64 {
+    if maximum <= min_temp {
+        0.0
+    } else {
+        ((value - min_temp) / (maximum - min_temp) * 100.0).clamp(0.0, 100.0)
+    }
+}
 
 impl From<usize> for TempUnit {
     fn from(index: usize) -> Self {

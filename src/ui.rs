@@ -17,6 +17,7 @@ use cosmic::widget::{self, list, settings, text};
 use crate::app::Message;
 use crate::config::{ChartColors, ChartKind};
 use crate::fl;
+use crate::sensors::GraphOption;
 
 /// Edge length of the chart preview shown in a sensor page header.
 pub const PREVIEW_SIZE: u16 = 48;
@@ -177,14 +178,25 @@ pub fn action_row<'a>(
 }
 
 /// The `Chart type` row, letting the user pick how the sensor is drawn.
+///
+/// The dropdown lists `options` and hands back the kind of the entry the user
+/// picked, so a sensor whose list skips a kind cannot be handed a kind it does
+/// not draw.
 pub fn chart_type_row<'a>(
-    options: &'a [&'static str],
-    selected: Option<usize>,
-    on_select: impl Fn(usize) -> Message + Send + Sync + 'static,
+    options: &[GraphOption],
+    selected: ChartKind,
+    on_select: impl Fn(ChartKind) -> Message + Send + Sync + 'static,
 ) -> Element<'a, Message> {
+    let options = options.to_vec();
+    let labels: Vec<&'static str> = options.iter().map(|option| option.label).collect();
+    let selected = options.iter().position(|option| option.kind == selected);
+
     control_row(
         fl!("chart-type"),
-        widget::dropdown(options, selected, on_select).width(DROPDOWN_WIDTH),
+        widget::dropdown(labels, selected, move |index| {
+            on_select(options[index].kind)
+        })
+        .width(DROPDOWN_WIDTH),
     )
 }
 
