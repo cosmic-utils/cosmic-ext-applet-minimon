@@ -116,6 +116,11 @@ pub static LABEL_ORIENTATIONS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     ]
 });
 
+/// The gap between a standing label and the chart it names. It is narrower
+/// than the panel's own spacing, so the two read as one thing rather than as
+/// two columns of the row.
+const STANDING_LABEL_GAP: u16 = 2;
+
 macro_rules! network_select {
     ($self:ident, $variant:expr) => {
         match $variant {
@@ -2124,7 +2129,11 @@ impl Minimon {
         }
     }
 
-    fn push_text_label(&self, elements: &mut VecDeque<Element<crate::app::Message>>, label: &str) {
+    fn push_text_label(
+        &self,
+        elements: &mut VecDeque<Element<crate::app::Message>>,
+        label: &str,
+    ) -> usize {
         // The height the sensor has is the height its chart is drawn at, which
         // is what a standing label has to fit rather than push the panel taller.
         let height = self.core.applet.suggested_size(false).0;
@@ -2142,6 +2151,48 @@ impl Minimon {
             LabelOrientation::LeftToRight => label,
         };
         elements.push_back(label.into());
+        elements.len() - 1
+    }
+
+    /// Pull a standing label against the chart it names.
+    ///
+    /// The panel spaces every part of a sensor the same, which leaves a label
+    /// that stands up reading as one more column of the row rather than as the
+    /// name of the chart beside it. The label was pushed at `label` and the
+    /// chart is the element pushed last, so the two are taken out of the row
+    /// and put back as one group with a gap of their own.
+    fn attach_label_to_chart(
+        &self,
+        elements: &mut VecDeque<Element<crate::app::Message>>,
+        label: usize,
+        horizontal: bool,
+    ) {
+        // A label on one line already reads as part of the row it sits in.
+        if self.config.label_orientation == LabelOrientation::LeftToRight {
+            return;
+        }
+
+        if elements.len() < 2 || label >= elements.len() - 1 {
+            return;
+        }
+
+        let chart = elements.pop_back().expect("the chart was just pushed");
+        let label = elements
+            .remove(label)
+            .expect("the label was pushed at this index");
+        let group: Element<Message> = if horizontal {
+            Row::from_vec(vec![label, chart])
+                .spacing(STANDING_LABEL_GAP)
+                .align_y(Alignment::Center)
+                .into()
+        } else {
+            Column::from_vec(vec![label, chart])
+                .spacing(STANDING_LABEL_GAP)
+                .align_x(Alignment::Center)
+                .into()
+        };
+
+        elements.push_back(group);
     }
 
     fn simple_ui(&'_ self) -> VecDeque<Element<'_, crate::app::Message>> {
@@ -2167,9 +2218,8 @@ impl Minimon {
             self.push_symbolic_icon(&mut elements, CPU_ICON, false);
         }
 
-        if self.config.cpu.label_visible() && cpu_has_content {
-            self.push_text_label(&mut elements, &fl!("label-cpu"));
-        }
+        let label = (self.config.cpu.label_visible() && cpu_has_content)
+            .then(|| self.push_text_label(&mut elements, &fl!("label-cpu")));
 
         let cpu_usage = self.cpu.latest_sample();
         // Format CPU usage based on horizontal layout and sample value
@@ -2208,15 +2258,16 @@ impl Minimon {
                     .width(width)
                     .into(),
             );
+
+            if let Some(label) = label {
+                self.attach_label_to_chart(&mut elements, label, horizontal);
+            }
         }
 
         elements
     }
 
-    fn cpu_temp_panel_ui(
-        &'_ self,
-        _horizontal: bool,
-    ) -> VecDeque<Element<'_, crate::app::Message>> {
+    fn cpu_temp_panel_ui(&'_ self, horizontal: bool) -> VecDeque<Element<'_, crate::app::Message>> {
         let size = self.core.applet.suggested_size(false);
 
         let mut elements: VecDeque<Element<Message>> = VecDeque::new();
@@ -2229,9 +2280,8 @@ impl Minimon {
                 self.push_symbolic_icon(&mut elements, TEMP_ICON, false);
             }
 
-            if self.config.cputemp.label_visible() && cputemp_has_content {
-                self.push_text_label(&mut elements, &fl!("label-cpu-temp"));
-            }
+            let label = (self.config.cputemp.label_visible() && cputemp_has_content)
+                .then(|| self.push_text_label(&mut elements, &fl!("label-cpu-temp")));
 
             if self.config.cputemp.value_visible() {
                 elements.push_back(
@@ -2249,6 +2299,10 @@ impl Minimon {
                         .width(size.1)
                         .into(),
                 );
+
+                if let Some(label) = label {
+                    self.attach_label_to_chart(&mut elements, label, horizontal);
+                }
             }
         }
 
@@ -2270,9 +2324,8 @@ impl Minimon {
             self.push_symbolic_icon(&mut elements, SYSTEMLOAD_ICON, false);
         }
 
-        if self.config.systemload.label_visible() && systemload_has_content {
-            self.push_text_label(&mut elements, &fl!("label-system-load"));
-        }
+        let label = (self.config.systemload.label_visible() && systemload_has_content)
+            .then(|| self.push_text_label(&mut elements, &fl!("label-system-load")));
 
         if self.config.systemload.value_visible() {
             let mut values = Vec::new();
@@ -2309,6 +2362,10 @@ impl Minimon {
                     .width(size.1)
                     .into(),
             );
+
+            if let Some(label) = label {
+                self.attach_label_to_chart(&mut elements, label, horizontal);
+            }
         }
 
         elements
@@ -2326,9 +2383,8 @@ impl Minimon {
             self.push_symbolic_icon(&mut elements, RAM_ICON, false);
         }
 
-        if self.config.memory.label_visible() && memory_has_content {
-            self.push_text_label(&mut elements, &fl!("label-memory"));
-        }
+        let label = (self.config.memory.label_visible() && memory_has_content)
+            .then(|| self.push_text_label(&mut elements, &fl!("label-memory")));
 
         if self.config.memory.value_visible() {
             let formatted_mem = self.memory.to_string(!horizontal);
@@ -2348,6 +2404,10 @@ impl Minimon {
                     .width(size.1)
                     .into(),
             );
+
+            if let Some(label) = label {
+                self.attach_label_to_chart(&mut elements, label, horizontal);
+            }
         }
 
         elements
@@ -2376,9 +2436,8 @@ impl Minimon {
             || (!nw_combined
                 && (self.config.network2.value_visible() || self.config.network2.chart_visible()));
 
-        if self.config.network1.label_visible() && network_has_content {
-            self.push_text_label(&mut elements, &fl!("label-network"));
-        }
+        let label = (self.config.network1.label_visible() && network_has_content)
+            .then(|| self.push_text_label(&mut elements, &fl!("label-network")));
 
         if self.config.network1.value_visible() {
             let mut network_values = Vec::new();
@@ -2432,6 +2491,10 @@ impl Minimon {
                     .width(size.1)
                     .into(),
             );
+
+            if let Some(label) = label {
+                self.attach_label_to_chart(&mut elements, label, horizontal);
+            }
         }
 
         if self.config.network2.value_visible() && !nw_combined {
@@ -2493,9 +2556,8 @@ impl Minimon {
             || (!disks_combined
                 && (self.config.disks2.value_visible() || self.config.disks2.chart_visible()));
 
-        if self.config.disks1.label_visible() && disks_has_content {
-            self.push_text_label(&mut elements, &fl!("label-disks"));
-        }
+        let label = (self.config.disks1.label_visible() && disks_has_content)
+            .then(|| self.push_text_label(&mut elements, &fl!("label-disks")));
 
         if self.config.disks1.value_visible() {
             let mut disks_values = Vec::new();
@@ -2546,6 +2608,10 @@ impl Minimon {
                     .width(size.1)
                     .into(),
             );
+
+            if let Some(label) = label {
+                self.attach_label_to_chart(&mut elements, label, horizontal);
+            }
         }
 
         if self.config.disks2.value_visible() && !disks_combined {
@@ -2601,9 +2667,8 @@ impl Minimon {
                 || config.vram.value_visible()
                 || config.vram.chart_visible();
 
-            if config.usage.label_visible() && gpu_has_content {
-                self.push_text_label(&mut elements, &fl!("label-gpu"));
-            }
+            let label = (config.usage.label_visible() && gpu_has_content)
+                .then(|| self.push_text_label(&mut elements, &fl!("label-gpu")));
 
             let formatted_gpu = gpu.gpu.to_string();
             let formatted_vram = gpu.vram.string(!horizontal);
@@ -2632,6 +2697,10 @@ impl Minimon {
 
             if config.usage.chart_visible() {
                 elements.push_back(gpu.gpu.chart().height(size.0).width(size.1).into());
+
+                if let Some(label) = label {
+                    self.attach_label_to_chart(&mut elements, label, horizontal);
+                }
             }
             if config.temp.value_visible() {
                 elements.push_back(
