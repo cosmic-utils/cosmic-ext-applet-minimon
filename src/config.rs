@@ -57,6 +57,55 @@ impl From<ChartKind> for usize {
     }
 }
 
+/// How the panel prints a sensor's label.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LabelOrientation {
+    /// The label is printed on one line, the way text is normally read.
+    #[default]
+    LeftToRight,
+    /// One character below the next, with the characters themselves upright.
+    /// Labels are short, so this trades width for height.
+    TopToBottom,
+}
+
+impl From<usize> for LabelOrientation {
+    fn from(index: usize) -> Self {
+        match index {
+            0 => LabelOrientation::LeftToRight,
+            1 => LabelOrientation::TopToBottom,
+            _ => {
+                log::error!("LabelOrientation::From({index}) Invalid index for LabelOrientation");
+                LabelOrientation::LeftToRight
+            }
+        }
+    }
+}
+
+impl LabelOrientation {
+    /// The label as the panel prints it. Top to bottom puts one character below
+    /// the next - the characters themselves stay upright, so a label stands up
+    /// rather than turning on its side - which gives up width to gain height.
+    pub fn text(self, label: &str) -> String {
+        match self {
+            LabelOrientation::LeftToRight => label.to_owned(),
+            LabelOrientation::TopToBottom => label
+                .chars()
+                .map(|character| character.to_string())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
+impl From<LabelOrientation> for usize {
+    fn from(orientation: LabelOrientation) -> Self {
+        match orientation {
+            LabelOrientation::LeftToRight => 0,
+            LabelOrientation::TopToBottom => 1,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceKind {
     Cpu,
@@ -629,6 +678,9 @@ pub struct MinimonConfig {
     pub refresh_rate: u32,
     pub value_size_default: u16,
     pub monospace_values: bool,
+    /// How the panel prints the labels of the sensors.
+    #[serde(default)]
+    pub label_orientation: LabelOrientation,
 
     pub cpu: CpuConfig,
     pub cputemp: CpuTempConfig,
@@ -657,6 +709,7 @@ impl Default for MinimonConfig {
             refresh_rate: 1000,
             value_size_default: 11,
             monospace_values: false,
+            label_orientation: LabelOrientation::default(),
             cpu: CpuConfig::default(),
             cputemp: CpuTempConfig::default(),
             memory: MemoryConfig::default(),
@@ -688,6 +741,13 @@ impl Default for MinimonConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_top_to_bottom_label_stands_each_character_up() {
+        assert_eq!(LabelOrientation::LeftToRight.text("CPU"), "CPU");
+        assert_eq!(LabelOrientation::TopToBottom.text("CPU"), "C\nP\nU");
+        assert_eq!(LabelOrientation::TopToBottom.text(""), "");
+    }
 
     #[test]
     fn legacy_configs_default_to_theme_colors_and_system_load_keeps_its_choice() {

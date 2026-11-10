@@ -36,7 +36,7 @@ use crate::barchart::StackedBarSvg;
 use crate::colorpicker::ColorPicker;
 use crate::config::{
     ChartColors, ChartKind, ColorVariant, ContentType, DeviceKind, DisksVariant, GpuConfig,
-    NetworkVariant,
+    LabelOrientation, NetworkVariant,
 };
 use crate::sensors::cpu::Cpu;
 use crate::sensors::cputemp::CpuTemp;
@@ -106,6 +106,15 @@ pub static SYSMON_LIST: LazyLock<BTreeMap<String, system_monitors::DesktopApp>> 
 
 pub static SYSMON_NAMES: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| SYSMON_LIST.values().map(|app| app.name.as_str()).collect());
+
+/// The entries of the `Label orientation` dropdown, in the order the config
+/// numbers them. The UI requires static lifetime of dropdown items.
+pub static LABEL_ORIENTATIONS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    vec![
+        fl!("label-orientation-left-to-right").leak(),
+        fl!("label-orientation-top-to-bottom").leak(),
+    ]
+});
 
 macro_rules! network_select {
     ($self:ident, $variant:expr) => {
@@ -297,6 +306,7 @@ pub enum Message {
     RefreshRateChanged(f64),
     ValueSizeChanged(u16),
     ToggleMonospaceValues(bool),
+    LabelOrientationChanged(LabelOrientation),
     PanelSpacing(u16),
     SelectCpuTempUnit(TempUnit),
     CpuTempMinTempChanged(f64),
@@ -1198,6 +1208,12 @@ impl cosmic::Application for Minimon {
                 self.save_config();
             }
 
+            Message::LabelOrientationChanged(orientation) => {
+                info!("Message::LabelOrientationChanged({orientation:?})");
+                self.config.label_orientation = orientation;
+                self.save_config();
+            }
+
             Message::ToggleMonospaceValues(toggle) => {
                 info!("Message::Monospacelabels({toggle:?})");
                 self.config.monospace_values = toggle;
@@ -1706,6 +1722,11 @@ impl Minimon {
                 settings::item::builder(fl!("settings-monospace_font"))
                     .toggler(self.config.monospace_values, Message::ToggleMonospaceValues),
             )
+            .add(ui::label_orientation_row(
+                &LABEL_ORIENTATIONS,
+                self.config.label_orientation,
+                Message::LabelOrientationChanged,
+            ))
             .add(ui::control_row(
                 fl!("settings-panel-spacing"),
                 spin_button(
@@ -2105,7 +2126,16 @@ impl Minimon {
 
     fn push_text_label(&self, elements: &mut VecDeque<Element<crate::app::Message>>, label: &str) {
         let size = self.config.value_size_default;
-        elements.push_back(widget::text::body(label.to_string()).size(size).into());
+        let label = widget::text::body(self.config.label_orientation.text(label)).size(size);
+        // `text::body` asks for a line height of 21px whatever size it is then
+        // printed at, which one character per line turns into a gap wider than
+        // the character above it. A stacked label gets one line per character
+        // and nothing more; a label on one line is centered either way.
+        let label = match self.config.label_orientation {
+            LabelOrientation::TopToBottom => label.line_height(1.0),
+            LabelOrientation::LeftToRight => label,
+        };
+        elements.push_back(label.into());
     }
 
     fn simple_ui(&'_ self) -> VecDeque<Element<'_, crate::app::Message>> {
