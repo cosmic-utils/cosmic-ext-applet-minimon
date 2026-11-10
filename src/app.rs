@@ -2125,7 +2125,13 @@ impl Minimon {
     }
 
     fn push_text_label(&self, elements: &mut VecDeque<Element<crate::app::Message>>, label: &str) {
-        let size = self.config.value_size_default;
+        // The height the sensor has is the height its chart is drawn at, which
+        // is what a standing label has to fit rather than push the panel taller.
+        let height = self.core.applet.suggested_size(false).0;
+        let size =
+            self.config
+                .label_orientation
+                .label_size(label, self.config.value_size_default, height);
         let label = widget::text::body(self.config.label_orientation.text(label)).size(size);
         // `text::body` asks for a line height of 21px whatever size it is then
         // printed at, which one character per line turns into a gap wider than

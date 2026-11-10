@@ -68,6 +68,27 @@ pub enum LabelOrientation {
     TopToBottom,
 }
 
+impl LabelOrientation {
+    /// The size a label is printed at, given the height the panel offers it.
+    ///
+    /// A label that stands up is one line per character, one em each, so its
+    /// height is the size times the number of characters. That has to fit the
+    /// height the sensor has - the chart next to it, which is itself never
+    /// taller than the panel - so a long label in a short panel is printed
+    /// smaller rather than taller, even below the smallest size the settings
+    /// offer: the panel does not grow to suit a label.
+    pub fn label_size(self, label: &str, wanted: u16, height: u16) -> u16 {
+        match self {
+            LabelOrientation::LeftToRight => wanted,
+            LabelOrientation::TopToBottom => {
+                let characters = label.chars().count();
+                let characters = u16::try_from(characters).unwrap_or(u16::MAX).max(1);
+                wanted.min((height / characters).max(1))
+            }
+        }
+    }
+}
+
 impl From<usize> for LabelOrientation {
     fn from(index: usize) -> Self {
         match index {
@@ -741,6 +762,20 @@ impl Default for MinimonConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_standing_label_is_printed_small_enough_to_fit_the_panel() {
+        // Four characters in the height of a chart get a quarter of it each,
+        // and a label that already fits keeps the size the settings ask for.
+        assert_eq!(LabelOrientation::TopToBottom.label_size("TEMP", 11, 32), 8);
+        assert_eq!(LabelOrientation::TopToBottom.label_size("NET", 8, 32), 8);
+        // A short panel shrinks the label rather than growing, and a size
+        // already smaller than the fit is left alone.
+        assert_eq!(LabelOrientation::TopToBottom.label_size("TEMP", 11, 8), 2);
+        assert_eq!(LabelOrientation::TopToBottom.label_size("TEMP", 4, 32), 4);
+        // A label on one line is one line tall whatever it says.
+        assert_eq!(LabelOrientation::LeftToRight.label_size("TEMP", 11, 8), 11);
+    }
 
     #[test]
     fn a_top_to_bottom_label_stands_each_character_up() {
