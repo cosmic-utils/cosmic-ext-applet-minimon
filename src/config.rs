@@ -23,7 +23,10 @@ pub enum ChartKind {
     Ring,
     Line,
     Heat,
+    /// One stacked bar per CPU core, as wide as the machine has cores.
     StackedBars,
+    /// One vertical bar per reading, filled to its current value.
+    VerticalBar,
 }
 
 impl From<usize> for ChartKind {
@@ -33,6 +36,7 @@ impl From<usize> for ChartKind {
             1 => ChartKind::Line,
             2 => ChartKind::Heat,
             3 => ChartKind::StackedBars,
+            4 => ChartKind::VerticalBar,
             _ => {
                 log::error!("GrapKind::From({}) Invalid index for ChartKind", index);
                 ChartKind::Line
@@ -48,6 +52,7 @@ impl From<ChartKind> for usize {
             ChartKind::Line => 1,
             ChartKind::Heat => 2,
             ChartKind::StackedBars => 3,
+            ChartKind::VerticalBar => 4,
         }
     }
 }
@@ -125,7 +130,7 @@ impl ChartColors {
                     graph1: rgba!(255, 6, 0, 255),
                     ..Default::default()
                 },
-                ChartKind::Line => ChartColors {
+                ChartKind::Line | ChartKind::VerticalBar => ChartColors {
                     graph1: rgba!(255, 6, 0, 85),
                     ..Default::default()
                 },
@@ -142,7 +147,7 @@ impl ChartColors {
                     graph1: rgba!(255, 6, 0, 255),
                     ..Default::default()
                 },
-                ChartKind::Line => ChartColors {
+                ChartKind::Line | ChartKind::VerticalBar => ChartColors {
                     graph1: rgba!(255, 90, 0, 85),
                     ..Default::default()
                 },
@@ -155,7 +160,7 @@ impl ChartColors {
                     graph3: rgba!(44, 87, 101, 255),
                     ..Default::default()
                 },
-                ChartKind::Line => ChartColors {
+                ChartKind::Line | ChartKind::VerticalBar => ChartColors {
                     graph1: rgba!(29, 172, 214, 140),
                     graph3: rgba!(44, 87, 101, 140),
                     ..Default::default()
@@ -179,7 +184,7 @@ impl ChartColors {
                     graph1: rgba!(0, 255, 0, 255),
                     ..Default::default()
                 },
-                ChartKind::Line => ChartColors {
+                ChartKind::Line | ChartKind::VerticalBar => ChartColors {
                     graph1: rgba!(0, 255, 0, 85),
                     ..Default::default()
                 },
@@ -190,7 +195,7 @@ impl ChartColors {
                     graph1: rgba!(0, 255, 0, 255),
                     ..Default::default()
                 },
-                ChartKind::Line => ChartColors {
+                ChartKind::Line | ChartKind::VerticalBar => ChartColors {
                     graph1: rgba!(0, 255, 0, 85),
                     ..Default::default()
                 },
@@ -201,7 +206,7 @@ impl ChartColors {
                     graph1: rgba!(255, 6, 0, 255),
                     ..Default::default()
                 },
-                ChartKind::Line => ChartColors {
+                ChartKind::Line | ChartKind::VerticalBar => ChartColors {
                     graph1: rgba!(255, 6, 0, 85),
                     ..Default::default()
                 },
@@ -252,10 +257,16 @@ impl Colors {
         }
     }
 
+    /// The colors a chart is drawn with.
+    ///
+    /// The vertical bar chart fills its bars with the line chart's first color
+    /// and their tracks with its second, so the two share one set of colors
+    /// instead of adding a fifth set a config saved before the bar chart existed
+    /// cannot supply.
     pub fn get(&self, chart: ChartKind) -> &ChartColors {
         match chart {
             ChartKind::Ring => &self.ring,
-            ChartKind::Line => &self.line,
+            ChartKind::Line | ChartKind::VerticalBar => &self.line,
             ChartKind::Heat => &self.heat,
             ChartKind::StackedBars => &self.stackedbars,
         }
@@ -264,7 +275,7 @@ impl Colors {
     pub fn get_mut(&mut self, chart: ChartKind) -> &mut ChartColors {
         match chart {
             ChartKind::Ring => &mut self.ring,
-            ChartKind::Line => &mut self.line,
+            ChartKind::Line | ChartKind::VerticalBar => &mut self.line,
             ChartKind::Heat => &mut self.heat,
             ChartKind::StackedBars => &mut self.stackedbars,
         }
@@ -732,6 +743,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn vertical_bars_share_the_line_colors() {
+        // The bar chart fills its bars from the line chart's color slots, so
+        // picking colors for one paints the other, and a config saved before
+        // the bar chart existed already has the colors it needs.
+        let mut colors = Colors::new(DeviceKind::Memory);
+        colors.get_mut(ChartKind::VerticalBar).graph1 = Srgba::new(1, 2, 3, 4);
+        assert_eq!(colors.get(ChartKind::Line).graph1, Srgba::new(1, 2, 3, 4));
+        assert_eq!(
+            ChartColors::new(DeviceKind::Cpu, ChartKind::VerticalBar).graph1,
+            ChartColors::new(DeviceKind::Cpu, ChartKind::Line).graph1
+        );
     }
 
     #[test]

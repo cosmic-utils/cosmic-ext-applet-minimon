@@ -33,6 +33,18 @@ pub static COLOR_CHOICES_DBL_RING: std::sync::LazyLock<[(&'static str, ColorVari
         ]
     });
 
+/// The two memory readings as bars: used at the bottom color, allocated above
+/// it in the third slot, as in the stacked line chart.
+pub static COLOR_CHOICES_LEVEL_STACKED: std::sync::LazyLock<[(&'static str, ColorVariant); 4]> =
+    std::sync::LazyLock::new(|| {
+        [
+            (fl!("graph-memory-used").leak(), ColorVariant::Graph1),
+            (fl!("graph-memory-allocated").leak(), ColorVariant::Graph3),
+            (fl!("graph-line-back").leak(), ColorVariant::Background),
+            (fl!("graph-line-frame").leak(), ColorVariant::Frame),
+        ]
+    });
+
 pub static COLOR_CHOICES_LINE_STACKED: std::sync::LazyLock<[(&'static str, ColorVariant); 4]> =
     std::sync::LazyLock::new(|| {
         [
@@ -49,7 +61,7 @@ pub struct Memory {
     samples_allocated: BoundedVecDeque<f64>,
     total_memory: f64,
     system: System,
-    graph_options: Vec<&'static str>,
+    graph_options: Vec<super::GraphOption>,
     /// colors cached so we don't need to convert to string every time
     svg_colors: SvgColors,
     config: MemoryConfig,
@@ -91,6 +103,27 @@ impl DemoGraph for Memory {
                     )
                 }
             }
+            ChartKind::VerticalBar => {
+                // show bars of 40% and 80% of max
+                if self.config.show_allocated {
+                    crate::svg_graph::level_bars(
+                        &[40.0, 80.0],
+                        &[
+                            crate::svg_graph::LevelFill::Graph1,
+                            crate::svg_graph::LevelFill::Graph3,
+                        ],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::level_bars(
+                        &[40.0],
+                        &[crate::svg_graph::LevelFill::Graph1],
+                        true,
+                        &self.svg_colors,
+                    )
+                }
+            }
             _ => {
                 log::error!(
                     "Graph type {:?} not supported for memory",
@@ -111,16 +144,28 @@ impl DemoGraph for Memory {
     }
 
     fn color_choices(&self) -> Vec<(&'static str, ColorVariant)> {
-        if self.config.chart == ChartKind::Line {
-            if self.config.show_allocated {
-                (*COLOR_CHOICES_LINE_STACKED).into()
-            } else {
-                (*super::COLOR_CHOICES_LINE).into()
+        match self.config.chart {
+            ChartKind::VerticalBar => {
+                if self.config.show_allocated {
+                    (*COLOR_CHOICES_LEVEL_STACKED).into()
+                } else {
+                    (*super::COLOR_CHOICES_LEVEL).into()
+                }
             }
-        } else if self.config.show_allocated {
-            (*COLOR_CHOICES_DBL_RING).into()
-        } else {
-            (*super::COLOR_CHOICES_RING).into()
+            ChartKind::Line => {
+                if self.config.show_allocated {
+                    (*COLOR_CHOICES_LINE_STACKED).into()
+                } else {
+                    (*super::COLOR_CHOICES_LINE).into()
+                }
+            }
+            _ => {
+                if self.config.show_allocated {
+                    (*COLOR_CHOICES_DBL_RING).into()
+                } else {
+                    (*super::COLOR_CHOICES_RING).into()
+                }
+            }
         }
     }
 
@@ -146,7 +191,9 @@ impl Sensor for Memory {
     }
 
     fn set_graph_kind(&mut self, kind: ChartKind) {
-        assert!(kind == ChartKind::Line || kind == ChartKind::Ring);
+        assert!(
+            kind == ChartKind::Line || kind == ChartKind::Ring || kind == ChartKind::VerticalBar
+        );
         self.config.chart = kind;
     }
 
@@ -252,6 +299,30 @@ impl Sensor for Memory {
             } else {
                 crate::svg_graph::ring(&value, pct as u8, None, &self.svg_colors)
             }
+        } else if self.config.chart == ChartKind::VerticalBar {
+            let used = crate::svg_graph::level_percent(self.latest_sample(), self.total_memory);
+            if self.config.show_allocated {
+                let allocated = crate::svg_graph::level_percent(
+                    self.latest_sample_allocated(),
+                    self.total_memory,
+                );
+                crate::svg_graph::level_bars(
+                    &[used, allocated],
+                    &[
+                        crate::svg_graph::LevelFill::Graph1,
+                        crate::svg_graph::LevelFill::Graph3,
+                    ],
+                    false,
+                    &self.svg_colors,
+                )
+            } else {
+                crate::svg_graph::level_bars(
+                    &[used],
+                    &[crate::svg_graph::LevelFill::Graph1],
+                    true,
+                    &self.svg_colors,
+                )
+            }
         } else if self.config.show_allocated {
             crate::svg_graph::line_stacked(
                 &self.samples_used,
@@ -301,8 +372,8 @@ impl Sensor for Memory {
             )
             .add(ui::chart_type_row(
                 &self.graph_options,
-                Some(kind.into()),
-                |index| Message::SelectGraphType(DeviceKind::Memory, index.into()),
+                kind,
+                move |choice| Message::SelectGraphType(DeviceKind::Memory, choice),
             ))
             .add(ui::chart_color_row(
                 config.colors().graph1,
@@ -343,7 +414,7 @@ impl Default for Memory {
             total_memory,
             system,
             config: MemoryConfig::default(),
-            graph_options: super::GRAPH_OPTIONS_RING_LINE.to_vec(),
+            graph_options: super::GRAPH_OPTIONS_RING_LINE.clone(),
             svg_colors: SvgColors::new(&ChartColors::default()),
         };
         memory.set_colors(&ChartColors::default());

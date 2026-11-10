@@ -131,7 +131,7 @@ impl Gpus {
 pub struct GpuGraph {
     id: String,
     samples: BoundedVecDeque<f64>,
-    graph_options: Vec<&'static str>,
+    graph_options: Vec<super::GraphOption>,
     svg_colors: SvgColors,
     disabled: bool,
     disabled_colors: SvgColors,
@@ -162,7 +162,7 @@ impl GpuGraph {
         GpuGraph {
             id: id.to_owned(),
             samples: BoundedVecDeque::from_iter(std::iter::repeat_n(0.0, MAX_SAMPLES), MAX_SAMPLES),
-            graph_options: super::GRAPH_OPTIONS_RING_LINE.to_vec(),
+            graph_options: super::GRAPH_OPTIONS_RING_LINE.clone(),
             svg_colors: SvgColors::new(&ChartColors::default()),
             disabled: false,
             disabled_colors: SvgColors {
@@ -260,6 +260,17 @@ impl GpuGraph {
                     &self.svg_colors
                 },
             )
+        } else if self.config.chart == ChartKind::VerticalBar {
+            crate::svg_graph::level_bars(
+                &[self.latest_sample().clamp(0.0, 100.0)],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                if self.disabled {
+                    &self.disabled_colors
+                } else {
+                    &self.svg_colors
+                },
+            )
         } else {
             crate::svg_graph::line(
                 &self.samples,
@@ -322,6 +333,13 @@ impl DemoGraph for GpuGraph {
                 100.0,
                 &self.svg_colors,
             ),
+            // show a bar of 40% of max
+            ChartKind::VerticalBar => crate::svg_graph::level_bars(
+                &[40.0],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                &self.svg_colors,
+            ),
             _ => {
                 log::error!("GPUGraph type not supported {:?}", self.config.chart);
                 INVALID_IMG.to_string()
@@ -339,10 +357,10 @@ impl DemoGraph for GpuGraph {
     }
 
     fn color_choices(&self) -> Vec<(&'static str, ColorVariant)> {
-        if self.config.chart == ChartKind::Line {
-            (*super::COLOR_CHOICES_LINE).into()
-        } else {
-            (*super::COLOR_CHOICES_RING).into()
+        match self.config.chart {
+            ChartKind::Line => (*super::COLOR_CHOICES_LINE).into(),
+            ChartKind::VerticalBar => (*super::COLOR_CHOICES_LEVEL).into(),
+            _ => (*super::COLOR_CHOICES_RING).into(),
         }
     }
 
@@ -358,7 +376,7 @@ impl DemoGraph for GpuGraph {
 pub struct VramGraph {
     id: String,
     samples: BoundedVecDeque<f64>,
-    graph_options: Vec<&'static str>,
+    graph_options: Vec<super::GraphOption>,
     total: f64,
     svg_colors: SvgColors,
     disabled: bool,
@@ -376,7 +394,7 @@ impl VramGraph {
         VramGraph {
             id: id.to_owned(),
             samples: BoundedVecDeque::from_iter(std::iter::repeat_n(0.0, MAX_SAMPLES), MAX_SAMPLES),
-            graph_options: super::GRAPH_OPTIONS_RING_LINE.to_vec(),
+            graph_options: super::GRAPH_OPTIONS_RING_LINE.clone(),
             total,
             svg_colors: SvgColors::new(&ChartColors::default()),
             disabled: false,
@@ -478,6 +496,20 @@ impl VramGraph {
                     &self.svg_colors
                 },
             )
+        } else if self.config.chart == ChartKind::VerticalBar {
+            crate::svg_graph::level_bars(
+                &[crate::svg_graph::level_percent(
+                    self.latest_sample(),
+                    self.total,
+                )],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                if self.disabled {
+                    &self.disabled_colors
+                } else {
+                    &self.svg_colors
+                },
+            )
         } else {
             crate::svg_graph::line(
                 &self.samples,
@@ -533,7 +565,7 @@ pub struct TempGraph {
     id: String,
     samples: super::temperature_history::TemperatureHistory,
     unit_options: Vec<&'static str>,
-    graph_options: Vec<&'static str>,
+    graph_options: Vec<super::GraphOption>,
     max_temp: f64,
     svg_colors: SvgColors,
     disabled: bool,
@@ -548,7 +580,7 @@ impl TempGraph {
             id: id.to_owned(),
             samples: super::temperature_history::TemperatureHistory::new(MAX_SAMPLES),
             unit_options: super::UNIT_OPTIONS.to_vec(),
-            graph_options: super::GRAPH_OPTIONS_RING_LINE_HEAT.to_vec(),
+            graph_options: super::GRAPH_OPTIONS_RING_LINE_HEAT.clone(),
             max_temp: 100.0,
             svg_colors: SvgColors::new(&ChartColors::default()),
             disabled: false,
@@ -666,6 +698,16 @@ impl TempGraph {
                 log::error!("StackedBars not supported for GpuTemp");
                 INVALID_IMG.to_string()
             }
+            ChartKind::VerticalBar => crate::svg_graph::level_bars(
+                &[super::temperature_level(
+                    self.latest_sample(),
+                    self.max_temp,
+                    self.config.min_temp,
+                )],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                colors,
+            ),
         };
         super::svg_icon_container::<Message>(svg)
     }
@@ -734,6 +776,13 @@ impl DemoGraph for TempGraph {
                 log::error!("StackedBars not supported for GpuTemp");
                 INVALID_IMG.to_string()
             }
+            // show a bar of 40% of max
+            ChartKind::VerticalBar => crate::svg_graph::level_bars(
+                &[40.0],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                &self.svg_colors,
+            ),
         }
     }
 
@@ -749,6 +798,7 @@ impl DemoGraph for TempGraph {
     fn color_choices(&self) -> Vec<(&'static str, ColorVariant)> {
         match self.config.chart {
             ChartKind::Line => (*super::COLOR_CHOICES_LINE).into(),
+            ChartKind::VerticalBar => (*super::COLOR_CHOICES_LEVEL).into(),
             ChartKind::Ring => (*super::COLOR_CHOICES_RING).into(),
             ChartKind::Heat => (*super::COLOR_CHOICES_HEAT).into(),
             ChartKind::StackedBars => panic!("StackedBars not supported for GpuTemp"),
@@ -801,6 +851,13 @@ impl DemoGraph for VramGraph {
                 32.0,
                 &self.svg_colors,
             ),
+            // show a bar of 40% of max
+            ChartKind::VerticalBar => crate::svg_graph::level_bars(
+                &[40.0],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                &self.svg_colors,
+            ),
             _ => {
                 log::error!("VRAM Graph type not supported {:?}", self.config.chart);
                 INVALID_IMG.to_string()
@@ -818,10 +875,10 @@ impl DemoGraph for VramGraph {
     }
 
     fn color_choices(&self) -> Vec<(&'static str, ColorVariant)> {
-        if self.config.chart == ChartKind::Line {
-            (*super::COLOR_CHOICES_LINE).into()
-        } else {
-            (*super::COLOR_CHOICES_RING).into()
+        match self.config.chart {
+            ChartKind::Line => (*super::COLOR_CHOICES_LINE).into(),
+            ChartKind::VerticalBar => (*super::COLOR_CHOICES_LEVEL).into(),
+            _ => (*super::COLOR_CHOICES_RING).into(),
         }
     }
 
@@ -974,8 +1031,8 @@ impl Gpu {
             ))
             .add(ui::chart_type_row(
                 &self.gpu.graph_options,
-                Some(kind.into()),
-                move |index| Message::GpuSelectGraphType(id.clone(), DeviceKind::Gpu, index.into()),
+                kind,
+                move |choice| Message::GpuSelectGraphType(id.clone(), DeviceKind::Gpu, choice),
             ))
             .add(ui::chart_color_row(
                 config.colors().graph1,
@@ -1014,10 +1071,8 @@ impl Gpu {
             ))
             .add(ui::chart_type_row(
                 &self.vram.graph_options,
-                Some(kind.into()),
-                move |index| {
-                    Message::GpuSelectGraphType(id.clone(), DeviceKind::Vram, index.into())
-                },
+                kind,
+                move |choice| Message::GpuSelectGraphType(id.clone(), DeviceKind::Vram, choice),
             ))
             .add(ui::chart_color_row(
                 config.colors().graph1,
@@ -1070,9 +1125,9 @@ impl Gpu {
             }))
             .add(ui::chart_type_row(
                 &self.temp.graph_options,
-                Some(kind.into()),
-                move |index| {
-                    Message::GpuSelectGraphType(graph_id.clone(), DeviceKind::GpuTemp, index.into())
+                kind,
+                move |choice| {
+                    Message::GpuSelectGraphType(graph_id.clone(), DeviceKind::GpuTemp, choice)
                 },
             ))
             .add(ui::chart_color_row(

@@ -69,6 +69,7 @@ pub struct Network {
     max_y: Option<u64>,
     svg_colors: SvgColors,
     dropdown_options: Vec<&'static str>,
+    graph_options: Vec<super::GraphOption>,
     config: NetworkConfig,
     refresh_rate: u32,
 }
@@ -78,21 +79,62 @@ impl DemoGraph for Network {
         let download = std::collections::VecDeque::from(DL_DEMO);
         let upload = std::collections::VecDeque::from(UL_DEMO);
 
+        let level = self.config.chart == ChartKind::VerticalBar;
         match self.config.variant {
-            NetworkVariant::Combined => crate::svg_graph::double_line(
-                &download,
-                &upload,
-                GRAPH_SAMPLES,
-                &self.svg_colors,
-                None,
-            ),
+            NetworkVariant::Combined => {
+                if level {
+                    // show bars of 65% and 30% of max
+                    crate::svg_graph::level_bars(
+                        &[65.0, 30.0],
+                        &[
+                            crate::svg_graph::LevelFill::Graph1,
+                            crate::svg_graph::LevelFill::Graph2,
+                        ],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::double_line(
+                        &download,
+                        &upload,
+                        GRAPH_SAMPLES,
+                        &self.svg_colors,
+                        None,
+                    )
+                }
+            }
             NetworkVariant::Download => {
-                crate::svg_graph::line_adaptive(&download, GRAPH_SAMPLES, &self.svg_colors, None)
+                if level {
+                    // show a bar of 65% of max
+                    crate::svg_graph::level_bars(
+                        &[65.0],
+                        &[crate::svg_graph::LevelFill::Graph1],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::line_adaptive(
+                        &download,
+                        GRAPH_SAMPLES,
+                        &self.svg_colors,
+                        None,
+                    )
+                }
             }
             NetworkVariant::Upload => {
-                let mut cols = self.svg_colors.clone();
-                cols.graph1 = cols.graph2.clone();
-                crate::svg_graph::line_adaptive(&upload, GRAPH_SAMPLES, &cols, None)
+                if level {
+                    // show a bar of 30% of max
+                    crate::svg_graph::level_bars(
+                        &[30.0],
+                        &[crate::svg_graph::LevelFill::Graph2],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    let mut cols = self.svg_colors.clone();
+                    cols.graph1 = cols.graph2.clone();
+                    crate::svg_graph::line_adaptive(&upload, GRAPH_SAMPLES, &cols, None)
+                }
             }
         }
     }
@@ -157,11 +199,12 @@ impl Sensor for Network {
     }
 
     fn graph_kind(&self) -> ChartKind {
-        ChartKind::Line
+        self.config.chart
     }
 
     fn set_graph_kind(&mut self, kind: ChartKind) {
-        assert!(kind == ChartKind::Line);
+        assert!(kind == ChartKind::Line || kind == ChartKind::VerticalBar);
+        self.config.chart = kind;
     }
 
     /// Retrieve the amount of data transmitted since last update.
@@ -234,24 +277,79 @@ impl Sensor for Network {
         _height_hint: u16,
         _width_hint: u16,
     ) -> cosmic::widget::Container<'_, crate::app::Message, cosmic::Theme, cosmic::Renderer> {
+        let level = self.config.chart == ChartKind::VerticalBar;
         let svg = match self.config.variant {
-            NetworkVariant::Combined => crate::svg_graph::double_line(
-                &self.download,
-                &self.upload,
-                GRAPH_SAMPLES,
-                &self.svg_colors,
-                self.max_y,
-            ),
-            NetworkVariant::Download => crate::svg_graph::line_adaptive(
-                &self.download,
-                GRAPH_SAMPLES,
-                &self.svg_colors,
-                self.max_y,
-            ),
+            NetworkVariant::Combined => {
+                if level {
+                    let max =
+                        crate::svg_graph::level_scale(&[&self.download, &self.upload], self.max_y)
+                            as f64;
+                    crate::svg_graph::level_bars(
+                        &[
+                            crate::svg_graph::level_percent(
+                                *self.download.back().unwrap_or(&0) as f64,
+                                max,
+                            ),
+                            crate::svg_graph::level_percent(
+                                *self.upload.back().unwrap_or(&0) as f64,
+                                max,
+                            ),
+                        ],
+                        &[
+                            crate::svg_graph::LevelFill::Graph1,
+                            crate::svg_graph::LevelFill::Graph2,
+                        ],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::double_line(
+                        &self.download,
+                        &self.upload,
+                        GRAPH_SAMPLES,
+                        &self.svg_colors,
+                        self.max_y,
+                    )
+                }
+            }
+            NetworkVariant::Download => {
+                if level {
+                    let max = crate::svg_graph::level_scale(&[&self.download], self.max_y) as f64;
+                    crate::svg_graph::level_bars(
+                        &[crate::svg_graph::level_percent(
+                            *self.download.back().unwrap_or(&0) as f64,
+                            max,
+                        )],
+                        &[crate::svg_graph::LevelFill::Graph1],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::line_adaptive(
+                        &self.download,
+                        GRAPH_SAMPLES,
+                        &self.svg_colors,
+                        self.max_y,
+                    )
+                }
+            }
             NetworkVariant::Upload => {
-                let mut cols = self.svg_colors.clone();
-                cols.graph1 = cols.graph2.clone();
-                crate::svg_graph::line_adaptive(&self.upload, GRAPH_SAMPLES, &cols, self.max_y)
+                if level {
+                    let max = crate::svg_graph::level_scale(&[&self.upload], self.max_y) as f64;
+                    crate::svg_graph::level_bars(
+                        &[crate::svg_graph::level_percent(
+                            *self.upload.back().unwrap_or(&0) as f64,
+                            max,
+                        )],
+                        &[crate::svg_graph::LevelFill::Graph2],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    let mut cols = self.svg_colors.clone();
+                    cols.graph1 = cols.graph2.clone();
+                    crate::svg_graph::line_adaptive(&self.upload, GRAPH_SAMPLES, &cols, self.max_y)
+                }
             }
         };
         super::svg_icon_container::<Message>(svg)
@@ -312,9 +410,14 @@ impl Sensor for Network {
         };
 
         section
+            .add(ui::chart_type_row(
+                &self.graph_options,
+                config.chart,
+                move |choice| Message::SelectGraphType(DeviceKind::Network(variant), choice),
+            ))
             .add(ui::chart_color_row(
                 swatch,
-                Message::ColorPickerOpen(DeviceKind::Network(variant), ChartKind::Line, None),
+                Message::ColorPickerOpen(DeviceKind::Network(variant), config.chart, None),
             ))
             .into()
     }
@@ -329,6 +432,7 @@ impl Default for Network {
             upload: BoundedVecDeque::from_iter(std::iter::repeat_n(0, MAX_SAMPLES), MAX_SAMPLES),
             max_y: None,
             dropdown_options: ["b", "Kb", "Mb", "Gb", "Tb"].into(),
+            graph_options: super::GRAPH_OPTIONS_LINE_BARS.clone(),
             svg_colors: SvgColors::new(&ChartColors::default()),
             config: NetworkConfig::default(),
             refresh_rate: 1000,
