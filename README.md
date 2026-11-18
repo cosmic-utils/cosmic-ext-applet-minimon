@@ -44,6 +44,9 @@ Every sensor offers the charts it can draw in its `Chart type` dropdown:
 
 ![Image](https://github.com/user-attachments/assets/fa6f4b2c-ab95-4815-b7ab-fdd7557797f7)
 
+<img width="298" height="51" alt="Screenshot_2026-11-18_12-32-11" src="https://github.com/user-attachments/assets/b39b7eb6-a8f6-426b-ae50-22f07d70d640" />
+
+
 ## Installing
 
 ### Flatpak
