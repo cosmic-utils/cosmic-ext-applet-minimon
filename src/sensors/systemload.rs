@@ -146,7 +146,6 @@ impl Sensor for SystemLoad {
         settings::section()
             .add(
                 settings::item::builder(fl!("enable-chart"))
-                    .description(fl!("system-load-chart-description"))
                     .toggler(self.config.chart_visible(), Message::ToggleSystemLoadChart),
             )
             .add(
