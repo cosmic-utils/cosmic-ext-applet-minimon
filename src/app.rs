@@ -904,7 +904,17 @@ impl cosmic::Application for Minimon {
                         self.memory.set_graph_kind(kind);
                         self.config.memory.chart = kind;
                     }
-                    _ => error!("Message::SelectGraphType unsupported kind/device combination."), // Disks and Network don't have graph selection
+                    DeviceKind::Network(variant) => {
+                        let (network, config) = network_select!(self, variant);
+                        network.set_graph_kind(kind);
+                        config.chart = kind;
+                    }
+                    DeviceKind::Disks(variant) => {
+                        let (disks, config) = disks_select!(self, variant);
+                        disks.set_graph_kind(kind);
+                        config.chart = kind;
+                    }
+                    _ => error!("Message::SelectGraphType unsupported kind/device combination."), // System Load always draws a line
                 }
                 self.save_config();
             }

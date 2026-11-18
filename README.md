@@ -15,6 +15,21 @@ Enable System Load in the applet settings to show its values, chart, or both.
 The values show the 1-, 5-, and 15-minute load averages; the chart shows all
 three averages in distinct, configurable colors with a shared adaptive scale. System Load is disabled by default.
 
+## Chart types
+
+Every sensor offers the charts it can draw in its `Chart type` dropdown:
+
+* **Ring** - a ring filled to the current reading.
+* **Line** - the recent history as a line.
+* **Heat** - the recent history as a cold-to-hot gradient (temperatures).
+* **Bars** - one stacked bar per CPU core, user and system time in their own colors (CPU).
+* **Vertical bar** - one bar per reading, filled from the bottom to its current
+  value: load, temperature between the minimum and the critical one, memory in
+  use. Sensors with two readings in one chart (download and upload, write and
+  read, used and allocated memory) draw two bars side by side. It uses the line
+  chart's colors: the first fills the bar, the second paints the track of a
+  single bar.
+
 ![Image](cosmic-applet-minimon.png)
 
 

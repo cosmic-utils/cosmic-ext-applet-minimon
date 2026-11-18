@@ -65,6 +65,7 @@ pub struct Disks {
     read: BoundedVecDeque<u64>,
     max_y: Option<u64>,
     svg_colors: SvgColors,
+    graph_options: Vec<super::GraphOption>,
     config: DisksConfig,
     refresh_rate: u32,
 }
@@ -74,17 +75,57 @@ impl DemoGraph for Disks {
         let write = std::collections::VecDeque::from(DL_DEMO);
         let read = std::collections::VecDeque::from(UL_DEMO);
 
+        let level = self.config.chart == ChartKind::VerticalBar;
         match self.config.variant {
             DisksVariant::Combined => {
-                crate::svg_graph::double_line(&write, &read, GRAPH_SAMPLES, &self.svg_colors, None)
+                if level {
+                    // show bars of 65% and 30% of max
+                    crate::svg_graph::level_bars(
+                        &[65.0, 30.0],
+                        &[
+                            crate::svg_graph::LevelFill::Graph1,
+                            crate::svg_graph::LevelFill::Graph2,
+                        ],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::double_line(
+                        &write,
+                        &read,
+                        GRAPH_SAMPLES,
+                        &self.svg_colors,
+                        None,
+                    )
+                }
             }
             DisksVariant::Write => {
-                crate::svg_graph::line_adaptive(&write, GRAPH_SAMPLES, &self.svg_colors, None)
+                if level {
+                    // show a bar of 65% of max
+                    crate::svg_graph::level_bars(
+                        &[65.0],
+                        &[crate::svg_graph::LevelFill::Graph1],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::line_adaptive(&write, GRAPH_SAMPLES, &self.svg_colors, None)
+                }
             }
             DisksVariant::Read => {
-                let mut cols = self.svg_colors.clone();
-                cols.graph1 = cols.graph2.clone();
-                crate::svg_graph::line_adaptive(&read, GRAPH_SAMPLES, &cols, None)
+                if level {
+                    // show a bar of 30% of max
+                    crate::svg_graph::level_bars(
+                        &[30.0],
+                        &[crate::svg_graph::LevelFill::Graph2],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    let mut cols = self.svg_colors.clone();
+                    cols.graph1 = cols.graph2.clone();
+                    crate::svg_graph::line_adaptive(&read, GRAPH_SAMPLES, &cols, None)
+                }
             }
         }
     }
@@ -125,11 +166,12 @@ impl Sensor for Disks {
     }
 
     fn graph_kind(&self) -> ChartKind {
-        ChartKind::Line
+        self.config.chart
     }
 
     fn set_graph_kind(&mut self, kind: ChartKind) {
-        assert!(kind == ChartKind::Line);
+        assert!(kind == ChartKind::Line || kind == ChartKind::VerticalBar);
+        self.config.chart = kind;
     }
 
     /// Retrieve the amount of data transmitted since last update.
@@ -205,24 +247,78 @@ impl Sensor for Disks {
         _height_hint: u16,
         _width_hint: u16,
     ) -> cosmic::widget::Container<'_, crate::app::Message, cosmic::Theme, cosmic::Renderer> {
+        let level = self.config.chart == ChartKind::VerticalBar;
         let svg = match self.config.variant {
-            DisksVariant::Combined => crate::svg_graph::double_line(
-                &self.write,
-                &self.read,
-                GRAPH_SAMPLES,
-                &self.svg_colors,
-                self.max_y,
-            ),
-            DisksVariant::Write => crate::svg_graph::line_adaptive(
-                &self.write,
-                GRAPH_SAMPLES,
-                &self.svg_colors,
-                self.max_y,
-            ),
+            DisksVariant::Combined => {
+                if level {
+                    let max = crate::svg_graph::level_scale(&[&self.write, &self.read], self.max_y)
+                        as f64;
+                    crate::svg_graph::level_bars(
+                        &[
+                            crate::svg_graph::level_percent(
+                                *self.write.back().unwrap_or(&0) as f64,
+                                max,
+                            ),
+                            crate::svg_graph::level_percent(
+                                *self.read.back().unwrap_or(&0) as f64,
+                                max,
+                            ),
+                        ],
+                        &[
+                            crate::svg_graph::LevelFill::Graph1,
+                            crate::svg_graph::LevelFill::Graph2,
+                        ],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::double_line(
+                        &self.write,
+                        &self.read,
+                        GRAPH_SAMPLES,
+                        &self.svg_colors,
+                        self.max_y,
+                    )
+                }
+            }
+            DisksVariant::Write => {
+                if level {
+                    let max = crate::svg_graph::level_scale(&[&self.write], self.max_y) as f64;
+                    crate::svg_graph::level_bars(
+                        &[crate::svg_graph::level_percent(
+                            *self.write.back().unwrap_or(&0) as f64,
+                            max,
+                        )],
+                        &[crate::svg_graph::LevelFill::Graph1],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    crate::svg_graph::line_adaptive(
+                        &self.write,
+                        GRAPH_SAMPLES,
+                        &self.svg_colors,
+                        self.max_y,
+                    )
+                }
+            }
             DisksVariant::Read => {
-                let mut cols = self.svg_colors.clone();
-                cols.graph1 = cols.graph2.clone();
-                crate::svg_graph::line_adaptive(&self.read, GRAPH_SAMPLES, &cols, self.max_y)
+                if level {
+                    let max = crate::svg_graph::level_scale(&[&self.read], self.max_y) as f64;
+                    crate::svg_graph::level_bars(
+                        &[crate::svg_graph::level_percent(
+                            *self.read.back().unwrap_or(&0) as f64,
+                            max,
+                        )],
+                        &[crate::svg_graph::LevelFill::Graph2],
+                        false,
+                        &self.svg_colors,
+                    )
+                } else {
+                    let mut cols = self.svg_colors.clone();
+                    cols.graph1 = cols.graph2.clone();
+                    crate::svg_graph::line_adaptive(&self.read, GRAPH_SAMPLES, &cols, self.max_y)
+                }
             }
         };
         super::svg_icon_container::<Message>(svg)
@@ -257,9 +353,14 @@ impl Sensor for Disks {
                 DeviceKind::Disks(variant),
                 None,
             ))
+            .add(ui::chart_type_row(
+                &self.graph_options,
+                config.chart,
+                move |choice| Message::SelectGraphType(DeviceKind::Disks(variant), choice),
+            ))
             .add(ui::chart_color_row(
                 swatch,
-                Message::ColorPickerOpen(DeviceKind::Disks(variant), ChartKind::Line, None),
+                Message::ColorPickerOpen(DeviceKind::Disks(variant), config.chart, None),
             ))
             .into()
     }
@@ -274,6 +375,7 @@ impl Default for Disks {
             read: BoundedVecDeque::from_iter(std::iter::repeat_n(0, MAX_SAMPLES), MAX_SAMPLES),
             max_y: None,
             svg_colors: SvgColors::new(&ChartColors::default()),
+            graph_options: super::GRAPH_OPTIONS_LINE_BARS.clone(),
             config: DisksConfig::default(),
             refresh_rate: 1000,
         }

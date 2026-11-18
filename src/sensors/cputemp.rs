@@ -134,7 +134,7 @@ impl HwmonTemp {
 pub struct CpuTemp {
     hwmon_temp: Option<HwmonTemp>,
     samples: super::temperature_history::TemperatureHistory,
-    graph_options: Vec<&'static str>,
+    graph_options: Vec<super::GraphOption>,
     unit_options: Vec<&'static str>,
     /// colors cached so we don't need to convert to string every time
     svg_colors: SvgColors,
@@ -163,6 +163,13 @@ impl DemoGraph for CpuTemp {
                 log::error!("StackedBars not supported for CpuTemp");
                 INVALID_IMG.to_string()
             }
+            // show a bar of 40% of max
+            ChartKind::VerticalBar => crate::svg_graph::level_bars(
+                &[40.0],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                &self.svg_colors,
+            ),
         }
     }
 
@@ -178,6 +185,7 @@ impl DemoGraph for CpuTemp {
     fn color_choices(&self) -> Vec<(&'static str, ColorVariant)> {
         match self.config.chart {
             ChartKind::Line => (*super::COLOR_CHOICES_LINE).into(),
+            ChartKind::VerticalBar => (*super::COLOR_CHOICES_LEVEL).into(),
             ChartKind::Ring => (*super::COLOR_CHOICES_RING).into(),
             ChartKind::Heat => (*super::COLOR_CHOICES_HEAT).into(),
             ChartKind::StackedBars => panic!("StackedBars not supported for CpuTemp"),
@@ -207,7 +215,12 @@ impl Sensor for CpuTemp {
     }
 
     fn set_graph_kind(&mut self, kind: ChartKind) {
-        assert!(kind == ChartKind::Line || kind == ChartKind::Ring || kind == ChartKind::Heat);
+        assert!(
+            kind == ChartKind::Line
+                || kind == ChartKind::Ring
+                || kind == ChartKind::Heat
+                || kind == ChartKind::VerticalBar
+        );
         self.config.chart = kind;
     }
 
@@ -304,6 +317,16 @@ impl Sensor for CpuTemp {
                 log::error!("StackedBars not supported for CpuTemp");
                 INVALID_IMG.to_string()
             }
+            ChartKind::VerticalBar => crate::svg_graph::level_bars(
+                &[super::temperature_level(
+                    self.latest_sample(),
+                    max,
+                    self.config.min_temp,
+                )],
+                &[crate::svg_graph::LevelFill::Graph1],
+                true,
+                &self.svg_colors,
+            ),
         };
         super::svg_icon_container::<Message>(svg)
     }
@@ -354,8 +377,8 @@ impl Sensor for CpuTemp {
             ))
             .add(ui::chart_type_row(
                 &self.graph_options,
-                Some(kind.into()),
-                |index| Message::SelectGraphType(DeviceKind::CpuTemp, index.into()),
+                kind,
+                move |choice| Message::SelectGraphType(DeviceKind::CpuTemp, choice),
             ))
             .add(ui::chart_color_row(
                 ui::chart_swatch(config.colors(), kind),
@@ -387,7 +410,7 @@ impl Default for CpuTemp {
         let mut cpu = CpuTemp {
             hwmon_temp: hwmon,
             samples: super::temperature_history::TemperatureHistory::new(MAX_SAMPLES),
-            graph_options: super::GRAPH_OPTIONS_RING_LINE_HEAT.to_vec(),
+            graph_options: super::GRAPH_OPTIONS_RING_LINE_HEAT.clone(),
             svg_colors: SvgColors::new(&ChartColors::default()),
             unit_options: super::UNIT_OPTIONS.to_vec(),
             config: CpuTempConfig::default(),

@@ -512,6 +512,138 @@ pub fn line_adaptive(
     svg
 }
 
+/// Left edge of the drawing area inside the 42x42 frame.
+const BAR_LEFT: f64 = 1.0;
+/// Width of the drawing area, and the height a bar filled to 100% gets.
+const BAR_AREA: f64 = 40.0;
+/// Baseline every level bar grows up from.
+const BAR_BASELINE: f64 = 41.0;
+/// Alpha of a dimmed bar, used for the empty part of a chart whose second
+/// color slot already paints another reading.
+const BAR_DIM_ALPHA: &str = "40";
+
+/// Which graph color paints a bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LevelFill {
+    Graph1,
+    Graph2,
+    Graph3,
+}
+
+/// Omit the alpha channel: bars are a chart's main mark, so they are drawn with
+/// the opaque color the line chart uses for its stroke, not its translucent fill.
+fn solid(color: &str) -> &str {
+    if color.len() == 9 { &color[..7] } else { color }
+}
+
+fn level_color(colors: &SvgColors, fill: LevelFill) -> String {
+    solid(match fill {
+        LevelFill::Graph1 => &colors.graph1,
+        LevelFill::Graph2 => &colors.graph2,
+        LevelFill::Graph3 => &colors.graph3,
+    })
+    .to_owned()
+}
+
+/// Horizontal room one bar gets, and the width of that bar.
+fn bar_slots(count: usize) -> (f64, f64) {
+    let pitch = BAR_AREA / count.max(1) as f64;
+    // A bar never fills its whole slot, so neighbouring bars stay readable.
+    (pitch, (pitch * 0.7).max(1.0).min(pitch))
+}
+
+/// A rectangle growing up from the baseline, `height` in chart units. Nothing
+/// is drawn for an empty bar, so its track stays visible.
+fn bar_rect(svg: &mut String, x: f64, width: f64, height: f64, color: &str) {
+    if height <= 0.0 {
+        return;
+    }
+    let height = height.min(BAR_AREA);
+    let top = BAR_BASELINE - height;
+    let _ = write!(
+        svg,
+        r#"<rect x="{x:.2}" y="{top:.2}" width="{width:.2}" height="{height:.2}" fill="{color}"/>"#
+    );
+}
+
+fn frame_open(svg: &mut String, colors: &SvgColors) {
+    svg.push_str(LINESVG_1);
+    svg.push_str(&colors.background);
+    svg.push_str(LINESVG_2);
+    svg.push_str(&colors.frame);
+    svg.push_str(LINESVG_3);
+}
+
+fn frame_close(svg: &mut String, colors: &SvgColors) {
+    svg.push_str(LINESVG_FRAME_START);
+    svg.push_str(&colors.frame);
+    svg.push_str(LINESVG_FRAME_END);
+    svg.push_str(LINESVG_9);
+}
+
+/// One vertical bar per reading, each filled from the baseline up to its current
+/// level, in the same rounded frame as the line chart.
+///
+/// `levels` are percentages and `fills` gives the color of each bar. `idle_track`
+/// paints the empty part above a bar with the second graph color, the color the
+/// ring chart draws its unused segment in; charts whose second slot paints
+/// another reading pass `false` and each bar gets its own color dimmed instead.
+pub fn level_bars(
+    levels: &[f64],
+    fills: &[LevelFill],
+    idle_track: bool,
+    colors: &SvgColors,
+) -> String {
+    assert_eq!(levels.len(), fills.len(), "one color per reading");
+    let mut svg = String::with_capacity(LINE_LEN);
+    frame_open(&mut svg, colors);
+
+    let (pitch, width) = bar_slots(levels.len());
+    for (index, (level, fill)) in levels.iter().zip(fills).enumerate() {
+        let x = BAR_LEFT + index as f64 * pitch + (pitch - width) / 2.0;
+        let fill = level_color(colors, *fill);
+        let track = if idle_track {
+            level_color(colors, LevelFill::Graph2)
+        } else {
+            format!("{fill}{BAR_DIM_ALPHA}")
+        };
+
+        bar_rect(&mut svg, x, width, BAR_AREA, &track);
+        bar_rect(
+            &mut svg,
+            x,
+            width,
+            BAR_AREA * level.clamp(0.0, 100.0) / 100.0,
+            &fill,
+        );
+    }
+
+    frame_close(&mut svg, colors);
+    svg
+}
+
+/// The scale a throughput bar is filled against: the configured bandwidth, or
+/// the largest sample of any series with the line charts' floor of 40 bytes.
+pub fn level_scale(series: &[&VecDeque<u64>], max_y: Option<u64>) -> u64 {
+    max_y.unwrap_or_else(|| {
+        series
+            .iter()
+            .flat_map(|samples| samples.iter().copied())
+            .max()
+            .unwrap_or(40)
+            .max(40) // Ensure min value is 40
+    })
+}
+
+/// `value` as a percentage of `maximum`, ready for [`level_bars`].
+pub fn level_percent(value: f64, maximum: f64) -> f64 {
+    if maximum <= 0.0 {
+        0.0
+    } else {
+        (value / maximum * 100.0).clamp(0.0, 100.0)
+    }
+}
+
 const HEAT_SIZE: f64 = 42.0;
 const HEAT_BASELINE: f64 = HEAT_SIZE - 1.0;
 const HEAT_HEIGHT: f64 = HEAT_SIZE - 2.0;
@@ -699,6 +831,110 @@ const DBLLINESVG_LEN: usize = 1000; // For preallocation
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One attribute of a `<rect>` as the type the assertion needs.
+    fn rect_value<T: std::str::FromStr>(rect: &str, attribute: &str) -> T
+    where
+        T::Err: std::fmt::Debug,
+    {
+        rect.split(&format!("{attribute}=\""))
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    /// Every bar of a chart as `(y, height, fill)`, skipping the frame's
+    /// rounded rectangles.
+    fn bars_of(svg: &str) -> Vec<(f64, f64, String)> {
+        svg.split("<rect")
+            .skip(1)
+            .filter(|rect| !rect.contains("rx="))
+            .map(|rect| {
+                (
+                    rect_value(rect, "y"),
+                    rect_value(rect, "height"),
+                    rect_value(rect, "fill"),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn level_bar_fills_from_the_baseline_over_its_idle_track() {
+        let colors = SvgColors::new(&ChartColors::default());
+        let svg = level_bars(&[40.0], &[LevelFill::Graph1], true, &colors);
+
+        assert!(svg.starts_with(r#"<svg width="42" height="42""#));
+        assert!(svg.ends_with("</g></svg>"));
+
+        // The track fills the drawing area, and the bar covers 40% of it, so it
+        // ends where a 40% ring would end: at the same height.
+        assert_eq!(
+            bars_of(&svg),
+            [
+                (1.0, 40.0, solid(&colors.graph2).to_owned()),
+                (25.0, 16.0, solid(&colors.graph1).to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn level_bar_stays_inside_the_frame_at_its_ends() {
+        let colors = SvgColors::new(&ChartColors::default());
+        for (level, height) in [(0.0, 0.0), (100.0, 40.0), (150.0, 40.0), (-20.0, 0.0)] {
+            let svg = level_bars(&[level], &[LevelFill::Graph1], true, &colors);
+            let bars = bars_of(&svg);
+            // An empty reading leaves the track alone, a full one covers it.
+            assert_eq!(
+                bars.len(),
+                if height == 0.0 { 1 } else { 2 },
+                "level {level}"
+            );
+            assert_eq!(bars.last().unwrap().1, height, "level {level}");
+            assert!(bars.iter().all(|bar| (1.0..=41.0).contains(&bar.0)));
+        }
+    }
+
+    #[test]
+    fn level_bars_of_two_readings_each_keep_their_own_color() {
+        let colors = SvgColors::new(&ChartColors::default());
+        let svg = level_bars(
+            &[25.0, 50.0],
+            &[LevelFill::Graph1, LevelFill::Graph3],
+            false,
+            &colors,
+        );
+        let bars = bars_of(&svg);
+
+        // Two bars, each with a track dimmed from its own color: the second slot
+        // of such a chart paints the other reading, so it cannot be a track.
+        assert_eq!(bars.len(), 4);
+        assert_eq!(
+            bars[0].2,
+            format!("{}{BAR_DIM_ALPHA}", solid(&colors.graph1))
+        );
+        assert_eq!(
+            bars[2].2,
+            format!("{}{BAR_DIM_ALPHA}", solid(&colors.graph3))
+        );
+        assert_eq!(bars[1].1, 10.0);
+        assert_eq!(bars[3].1, 20.0);
+    }
+
+    #[test]
+    fn level_scale_prefers_the_configured_bandwidth_and_floors_at_40_bytes() {
+        let samples = VecDeque::from([5000u64, 10]);
+        assert_eq!(level_scale(&[&samples], Some(1000)), 1000);
+        assert_eq!(level_scale(&[&samples], None), 5000);
+        assert_eq!(level_scale(&[&VecDeque::from([0u64])], None), 40);
+        assert_eq!(level_percent(500.0, 1000.0), 50.0);
+        assert_eq!(level_percent(5000.0, 1000.0), 100.0);
+        assert_eq!(level_percent(1.0, 0.0), 0.0);
+    }
 
     #[test]
     fn heat_value_follows_gradient_instead_of_configured_line_color() {
