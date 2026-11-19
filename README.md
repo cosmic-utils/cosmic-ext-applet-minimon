@@ -30,6 +30,17 @@ Every sensor offers the charts it can draw in its `Chart type` dropdown:
   chart's colors: the first fills the bar, the second paints the track of a
   single bar.
 
+## Label orientation
+
+The labels of the sensors (`CPU`, `TEMP`, `MEM`, `NET`, `DISK`, `GPU`, `LOAD`) are
+printed left to right. `Label orientation` in the general settings can print
+them top to bottom instead: one character below the next, with the characters
+themselves upright - a label that stands up rather than one turned sideways -
+which trades width for height. A standing label is printed small enough to fit
+the height of the chart next to it, so it never makes the panel taller, and it
+is pulled against that chart with a gap of its own rather than spaced evenly
+with the rest of the sensor, so it reads as the chart's name.
+
 ![Image](cosmic-applet-minimon.png)
 
 

@@ -15,7 +15,7 @@ use cosmic::iced::{Alignment, Length};
 use cosmic::widget::{self, list, settings, text};
 
 use crate::app::Message;
-use crate::config::{ChartColors, ChartKind};
+use crate::config::{ChartColors, ChartKind, LabelOrientation};
 use crate::fl;
 use crate::sensors::GraphOption;
 
@@ -195,6 +195,24 @@ pub fn chart_type_row<'a>(
         widget::dropdown(labels, selected, move |index| {
             on_select(options[index].kind)
         })
+        .width(DROPDOWN_WIDTH),
+    )
+}
+
+/// The `Label orientation` row: whether a label is printed on one line or with
+/// one character below the next.
+pub fn label_orientation_row<'a>(
+    options: &[&'static str],
+    selected: LabelOrientation,
+    on_select: impl Fn(LabelOrientation) -> Message + Send + Sync + 'static,
+) -> Element<'a, Message> {
+    control_row(
+        fl!("label-orientation"),
+        widget::dropdown(
+            options.to_vec(),
+            Some(usize::from(selected)),
+            move |index| on_select(LabelOrientation::from(index)),
+        )
         .width(DROPDOWN_WIDTH),
     )
 }
