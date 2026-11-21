@@ -114,6 +114,11 @@ chart-colors = Chart colors
 system-load-capacity = CPU capacity
 use-graph-colors = Use graph colors for values
 
+net-show-totals = Show total transferred
+net-show-totals-description = Show the total amount of data downloaded, uploaded, and transferred in both directions for the selected interfaces.
+net-total-period = Total period
+net-total-session = Since boot
+net-total-today = Today
 net-all-interfaces = Monitor all network interfaces
 net-interfaces-description = Includes loopback, VPN and virtual interfaces. Turn off to choose interfaces for both download and upload.
 net-no-interfaces = No interfaces selected. Network traffic will be zero.
