@@ -1,7 +1,5 @@
 use bounded_vec_deque::BoundedVecDeque;
 
-use sysinfo::{DiskRefreshKind, Disks as DisksInfo};
-
 use crate::{
     colorpicker::DemoGraph,
     config::{ChartColors, ChartKind, ColorVariant, DeviceKind, DisksConfig},
@@ -19,6 +17,10 @@ use crate::ui;
 use std::any::Any;
 
 use super::Sensor;
+
+mod activity;
+
+use activity::DiskActivity;
 
 const MAX_SAMPLES: usize = 30;
 const GRAPH_SAMPLES: usize = 21;
@@ -60,7 +62,7 @@ pub enum UnitVariant {
 
 #[derive(Debug)]
 pub struct Disks {
-    disks: DisksInfo,
+    activity: DiskActivity,
     write: BoundedVecDeque<u64>,
     read: BoundedVecDeque<u64>,
     max_y: Option<u64>,
@@ -176,19 +178,9 @@ impl Sensor for Disks {
 
     /// Retrieve the amount of data transmitted since last update.
     fn update(&mut self) {
-        let r = DiskRefreshKind::nothing().with_io_usage();
-        self.disks.refresh_specifics(true, r);
-        let mut wr = 0;
-        let mut rd = 0;
-
-        for disk in self.disks.list() {
-            let usage = disk.usage();
-            wr += usage.written_bytes;
-            rd += usage.read_bytes;
-        }
-
-        self.write.push_back(wr);
-        self.read.push_back(rd);
+        let (read, written) = self.activity.sample();
+        self.write.push_back(written);
+        self.read.push_back(read);
     }
 
     fn demo_graph(&self) -> Box<dyn DemoGraph> {
@@ -368,9 +360,10 @@ impl Sensor for Disks {
 
 impl Default for Disks {
     fn default() -> Self {
-        let disks = DisksInfo::new_with_refreshed_list();
+        let mut activity = DiskActivity::default();
+        activity.sample();
         Disks {
-            disks,
+            activity,
             write: BoundedVecDeque::from_iter(std::iter::repeat_n(0, MAX_SAMPLES), MAX_SAMPLES),
             read: BoundedVecDeque::from_iter(std::iter::repeat_n(0, MAX_SAMPLES), MAX_SAMPLES),
             max_y: None,
@@ -453,7 +446,7 @@ impl Disks {
                 break;
             }
 
-            total_bitrate += bitrate;
+            total_bitrate = total_bitrate.saturating_add(bitrate);
             total_duration += sample_interval_ms;
         }
 
@@ -484,3 +477,14 @@ const UL_DEMO: [u64; 21] = [
     0, 1687, 0, 9417, 9161, 838, 6739, 1561, 212372, 312372, 412372, 512372, 512372, 512372,
     412372, 312372, 112372, 864, 0, 8587, 760,
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rate_saturates_when_two_samples_exceed_the_byte_range() {
+        let samples = BoundedVecDeque::from_iter([u64::MAX; 2], MAX_SAMPLES);
+        assert_eq!(Disks::last_second_rate(&samples, 500), u64::MAX);
+    }
+}
